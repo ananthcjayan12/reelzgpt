@@ -60,23 +60,25 @@ export function VideoProcessor() {
   const handleGenerateAllAudio = async () => {
     setIsGeneratingAllAudio(true);
     try {
-      for (const scene of scenes) {
-        if (!scene.status?.audioGenerated) {
-          const audio = await generateAudio(scene.narration);
-          
-          // Convert Blob to data URL for storage
-          const audioUrl = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.readAsDataURL(audio);
-          });
+      // Get all scenes that need audio generation
+      const scenesToProcess = scenes.filter(scene => !scene.status?.audioGenerated);
+      
+      // Process all scenes in parallel
+      await Promise.all(scenesToProcess.map(async (scene) => {
+        const audio = await generateAudio(scene.narration);
+        
+        // Convert Blob to data URL for storage
+        const audioUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(audio);
+        });
 
-          updateScene(scene.id, {
-            audio: audioUrl,
-            status: { ...scene.status, audioGenerated: true }
-          });
-        }
-      }
+        updateScene(scene.id, {
+          audio: audioUrl,
+          status: { ...scene.status, audioGenerated: true }
+        });
+      }));
     } catch (error: any) {
       setError({
         stage: 'audio-generation',
@@ -91,17 +93,19 @@ export function VideoProcessor() {
   const handleGenerateAllImages = async () => {
     setIsGeneratingAllImages(true);
     try {
-      for (const scene of scenes) {
-        if (!scene.status?.imageGenerated) {
-          const imageUrl = await generateImage(scene.imagePrompt, {
-            isReel: currentProject?.videoFormat === 'reel'
-          });
-          updateScene(scene.id, {
-            image: imageUrl,
-            status: { ...scene.status, imageGenerated: true }
-          });
-        }
-      }
+      // Get all scenes that need image generation
+      const scenesToProcess = scenes.filter(scene => !scene.status?.imageGenerated);
+      
+      // Process all scenes in parallel
+      await Promise.all(scenesToProcess.map(async (scene) => {
+        const imageUrl = await generateImage(scene.imagePrompt, {
+          isReel: currentProject?.videoFormat === 'reel'
+        });
+        updateScene(scene.id, {
+          image: imageUrl,
+          status: { ...scene.status, imageGenerated: true }
+        });
+      }));
     } catch (error: any) {
       setError({
         stage: 'image-generation',
