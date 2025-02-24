@@ -1,0 +1,20 @@
+.
+├── app
+│   ├── favicon.ico
+│   ├── globals.css
+│   ├── layout.tsx
+│   └── page.tsx
+├── lib
+│   └── utils.ts
+├── components.json
+├── eslint.config.mjs
+├── filstruct.txt
+├── filstruct.yxy
+├── next-env.d.ts
+├── next.config.ts
+├── package-lock.json
+├── package.json
+├── postcss.config.mjs
+└── tsconfig.json
+
+3 directories, 15 files
