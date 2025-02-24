@@ -12,6 +12,7 @@ import { generateImage } from '@/lib/services/replicate';
 
 export function VideoProcessor() {
   const [url, setUrl] = useState('');
+  const [videoFormat, setVideoFormat] = useState<'landscape' | 'reel'>('landscape');
   const { isProcessing, progress } = useProcessingState();
   const scenes = useScenes();
   const currentProject = useCurrentProject();
@@ -25,8 +26,8 @@ export function VideoProcessor() {
     if (!url) return;
 
     try {
-      // Create new project
-      const project = createProject(url);
+      // Create new project with selected video format
+      const project = createProject(url, videoFormat);
 
       // Get YouTube transcription
       const transcription = await getOrCreateTranscription(url);
@@ -92,7 +93,9 @@ export function VideoProcessor() {
     try {
       for (const scene of scenes) {
         if (!scene.status?.imageGenerated) {
-          const imageUrl = await generateImage(scene.imagePrompt);
+          const imageUrl = await generateImage(scene.imagePrompt, {
+            isReel: currentProject?.videoFormat === 'reel'
+          });
           updateScene(scene.id, {
             image: imageUrl,
             status: { ...scene.status, imageGenerated: true }
@@ -192,6 +195,15 @@ export function VideoProcessor() {
             className="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={isProcessing}
           />
+          <select
+            value={videoFormat}
+            onChange={(e) => setVideoFormat(e.target.value as 'landscape' | 'reel')}
+            className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={isProcessing}
+          >
+            <option value="landscape">Landscape (16:9)</option>
+            <option value="reel">Vertical Reel (9:16)</option>
+          </select>
           <button
             type="submit"
             disabled={isProcessing || !url}

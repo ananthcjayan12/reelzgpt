@@ -4,7 +4,7 @@ import React from 'react';
 import { Scene } from '@/types';
 import { generateAudio } from '@/lib/services/openai';
 import { generateImage } from '@/lib/services/replicate';
-import { useProjectActions } from '@/lib/store';
+import { useProjectActions, useCurrentProject } from '@/lib/store';
 import { AudioPlayer } from './AudioPlayer';
 import { Trash2 } from 'lucide-react';
 
@@ -15,6 +15,7 @@ interface ScenePreviewProps {
 
 export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
   const { updateScene, setError } = useProjectActions();
+  const currentProject = useCurrentProject();
   const [isGeneratingAudio, setIsGeneratingAudio] = React.useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = React.useState(false);
   const [isEditingNarration, setIsEditingNarration] = React.useState(false);
@@ -55,7 +56,9 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
   const handleGenerateImage = async () => {
     setIsGeneratingImage(true);
     try {
-      const imageUrl = await generateImage(imagePrompt);
+      const imageUrl = await generateImage(imagePrompt, {
+        isReel: currentProject?.videoFormat === 'reel'
+      });
       updateScene(scene.id, {
         image: imageUrl,
         status: { ...status, imageGenerated: true }

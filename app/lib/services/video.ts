@@ -1,5 +1,5 @@
 import { ProcessingError } from '../types/errors';
-import { Scene } from '@/types';
+import { Scene, Project } from '@/types';
 import { CreateFFmpegOptions } from '@ffmpeg/ffmpeg';
 
 export class VideoProcessor {
@@ -70,7 +70,7 @@ export class VideoProcessor {
     }
   }
 
-  async createVideoSegment(imageBuffer: Buffer, audioBlob: Blob, outputName: string, duration: number) {
+  async createVideoSegment(imageBuffer: Buffer, audioBlob: Blob, outputName: string, duration: number, isReel: boolean) {
     try {
       await this.ensureInitialized();
       
@@ -83,6 +83,10 @@ export class VideoProcessor {
       // Convert audio blob to buffer and write to memory
       const audioArrayBuffer = await audioBlob.arrayBuffer();
       this.ffmpeg.FS('writeFile', 'audio.mp3', new Uint8Array(audioArrayBuffer));
+
+      // Set video dimensions based on format
+      const width = isReel ? 1080 : 1920;
+      const height = isReel ? 1920 : 1080;
 
       // Create video from image and audio
       await this.ffmpeg.run(
@@ -100,6 +104,7 @@ export class VideoProcessor {
         '-b:a', '192k',
         '-pix_fmt', 'yuv420p',
         '-shortest',
+        '-s', `${width}x${height}`,  // Set video dimensions
         '-t', duration.toString(),
         outputName
       );
@@ -183,7 +188,7 @@ export class VideoProcessor {
   /**
    * Process a complete video from scenes with audio and images
    */
-  async processVideo(scenes: Scene[]): Promise<Blob> {
+  async processVideo(scenes: Scene[], project: Project): Promise<Blob> {
     try {
       await this.ensureInitialized();
       
@@ -234,7 +239,8 @@ export class VideoProcessor {
           Buffer.from(imageBuffer),
           audioBlob,
           `segment${segments.length}.mp4`,
-          audioDuration
+          audioDuration,
+          project.videoFormat === 'reel'
         );
         segments.push(segment);
         

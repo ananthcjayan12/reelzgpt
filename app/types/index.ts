@@ -29,6 +29,7 @@ export interface Project {
   scenes: Scene[];
   youtubeDetails?: YouTubeDetails;
   status: 'draft' | 'processing' | 'completed' | 'failed';
+  videoFormat: 'landscape' | 'reel';
   createdAt: Date;
   updatedAt: Date;
 }

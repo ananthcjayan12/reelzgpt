@@ -3,7 +3,7 @@ import Replicate from 'replicate';
 
 export async function POST(request: Request) {
   try {
-    const { prompt, width, height, apiKey } = await request.json();
+    const { prompt, width, height, apiKey, aspect_ratio } = await request.json();
 
     if (!apiKey) {
       return NextResponse.json(
@@ -24,6 +24,7 @@ export async function POST(request: Request) {
           negative_prompt: "blurry, low quality, distorted, deformed, ugly, bad anatomy",
           width,
           height,
+          aspect_ratio,
           scheduler: "K_EULER",
           num_outputs: 1,
           guidance_scale: 7.5,

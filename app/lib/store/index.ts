@@ -17,7 +17,7 @@ interface ProjectState {
   error: ProcessingError | null;
   
   // Actions
-  createProject: (youtubeUrl: string) => Project;
+  createProject: (youtubeUrl: string, videoFormat: 'landscape' | 'reel') => Project;
   loadProject: (projectId: string) => void;
   deleteProject: (projectId: string) => void;
   updateProject: (projectId: string, updates: Partial<Project>) => void;
@@ -47,13 +47,14 @@ export const useProjectStore = create<ProjectState>()(
       ...initialState,
 
       // Project management actions
-      createProject: (youtubeUrl: string) => {
+      createProject: (youtubeUrl: string, videoFormat: 'landscape' | 'reel') => {
         const project: Project = {
           id: crypto.randomUUID(),
           youtubeUrl,
           transcription: '',
           scenes: [],
           status: 'draft',
+          videoFormat,
           createdAt: new Date(),
           updatedAt: new Date(),
         };

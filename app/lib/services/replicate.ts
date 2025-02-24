@@ -47,6 +47,8 @@ export async function generateImage(
   };
 
   const finalPrompt = shouldEnhancePrompt ? enhancePrompt(prompt) : prompt;
+  
+  // Set dimensions based on video format
   const width = isReel ? 1080 : 1920;
   const height = isReel ? 1920 : 1080;
 
@@ -73,6 +75,7 @@ export async function generateImage(
           width,
           height,
           apiKey,
+          aspect_ratio: isReel ? "9:16" : "16:9"
         }),
       });
 
