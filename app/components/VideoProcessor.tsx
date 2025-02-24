@@ -1,17 +1,19 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useProjectActions, useProcessingState, useScenes } from '@/lib/store';
+import { useProjectActions, useProcessingState, useScenes, useCurrentProject } from '@/lib/store';
 import { ProjectService } from '@/lib/services/project';
 import { getOrCreateTranscription } from '@/lib/services/youtube';
 import { Scene } from '@/types';
 import { ScenePreview } from '@/components/ScenePreview';
+import { ProjectList } from '@/components/ProjectList';
 
 export function VideoProcessor() {
   const [url, setUrl] = useState('');
   const { isProcessing, progress } = useProcessingState();
   const scenes = useScenes();
-  const { setError, setScenes } = useProjectActions();
+  const currentProject = useCurrentProject();
+  const { createProject, setError, setScenes } = useProjectActions();
   const projectService = new ProjectService();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -20,7 +22,7 @@ export function VideoProcessor() {
 
     try {
       // Create new project
-      await projectService.createProject(url);
+      const project = createProject(url);
 
       // Get YouTube transcription
       const transcription = await getOrCreateTranscription(url);
@@ -131,10 +133,10 @@ export function VideoProcessor() {
         </div>
       )}
 
-      {scenes.length > 0 && !isProcessing && (
+      {currentProject && scenes.length > 0 && !isProcessing && (
         <div className="space-y-6">
           <div className="flex justify-between items-center">
-            <h2 className="text-lg font-semibold">Generated Scenes</h2>
+            <h2 className="text-lg font-semibold">Current Project</h2>
             <button
               onClick={handleGenerateVideo}
               disabled={!scenes.every(scene => scene.status?.audioGenerated && scene.status?.imageGenerated)}
@@ -150,6 +152,8 @@ export function VideoProcessor() {
           </div>
         </div>
       )}
+
+      {!currentProject && <ProjectList />}
     </div>
   );
 } 

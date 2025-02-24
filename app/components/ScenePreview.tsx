@@ -15,6 +15,10 @@ export function ScenePreview({ scene }: ScenePreviewProps) {
   const { updateScene, setError } = useProjectActions();
   const [isGeneratingAudio, setIsGeneratingAudio] = React.useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = React.useState(false);
+  const [isEditingNarration, setIsEditingNarration] = React.useState(false);
+  const [isEditingPrompt, setIsEditingPrompt] = React.useState(false);
+  const [narration, setNarration] = React.useState(scene.narration);
+  const [imagePrompt, setImagePrompt] = React.useState(scene.imagePrompt);
 
   // Ensure scene has status
   const status = scene.status || { audioGenerated: false, imageGenerated: false };
@@ -22,7 +26,7 @@ export function ScenePreview({ scene }: ScenePreviewProps) {
   const handleGenerateAudio = async () => {
     setIsGeneratingAudio(true);
     try {
-      const audio = await generateAudio(scene.narration);
+      const audio = await generateAudio(narration);
       updateScene(scene.id, {
         audio,
         status: { ...status, audioGenerated: true }
@@ -41,7 +45,7 @@ export function ScenePreview({ scene }: ScenePreviewProps) {
   const handleGenerateImage = async () => {
     setIsGeneratingImage(true);
     try {
-      const imageUrl = await generateImage(scene.imagePrompt);
+      const imageUrl = await generateImage(imagePrompt);
       updateScene(scene.id, {
         image: imageUrl,
         status: { ...status, imageGenerated: true }
@@ -55,6 +59,22 @@ export function ScenePreview({ scene }: ScenePreviewProps) {
     } finally {
       setIsGeneratingImage(false);
     }
+  };
+
+  const handleSaveNarration = () => {
+    updateScene(scene.id, {
+      narration,
+      status: { ...status, audioGenerated: false }
+    });
+    setIsEditingNarration(false);
+  };
+
+  const handleSavePrompt = () => {
+    updateScene(scene.id, {
+      imagePrompt,
+      status: { ...status, imageGenerated: false }
+    });
+    setIsEditingPrompt(false);
   };
 
   return (
@@ -79,15 +99,65 @@ export function ScenePreview({ scene }: ScenePreviewProps) {
         </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-4">
         <div>
-          <h4 className="text-sm font-medium text-gray-700">Narration</h4>
-          <p className="text-sm text-gray-600">{scene.narration}</p>
+          <div className="flex justify-between items-center mb-2">
+            <h4 className="text-sm font-medium text-gray-700">Narration</h4>
+            <button
+              onClick={() => setIsEditingNarration(!isEditingNarration)}
+              className="px-2 py-1 text-sm bg-blue-100 text-blue-600 rounded hover:bg-blue-200 transition-colors"
+            >
+              {isEditingNarration ? 'Cancel' : 'Edit Narration'}
+            </button>
+          </div>
+          {isEditingNarration ? (
+            <div className="space-y-2">
+              <textarea
+                value={narration}
+                onChange={(e) => setNarration(e.target.value)}
+                className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                rows={4}
+              />
+              <button
+                onClick={handleSaveNarration}
+                className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
+              >
+                Save Changes
+              </button>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-600">{narration}</p>
+          )}
         </div>
         
         <div>
-          <h4 className="text-sm font-medium text-gray-700">Image Prompt</h4>
-          <p className="text-sm text-gray-600">{scene.imagePrompt}</p>
+          <div className="flex justify-between items-center mb-2">
+            <h4 className="text-sm font-medium text-gray-700">Image Prompt</h4>
+            <button
+              onClick={() => setIsEditingPrompt(!isEditingPrompt)}
+              className="px-2 py-1 text-sm bg-blue-100 text-blue-600 rounded hover:bg-blue-200 transition-colors"
+            >
+              {isEditingPrompt ? 'Cancel' : 'Edit Prompt'}
+            </button>
+          </div>
+          {isEditingPrompt ? (
+            <div className="space-y-2">
+              <textarea
+                value={imagePrompt}
+                onChange={(e) => setImagePrompt(e.target.value)}
+                className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                rows={4}
+              />
+              <button
+                onClick={handleSavePrompt}
+                className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
+              >
+                Save Changes
+              </button>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-600">{imagePrompt}</p>
+          )}
         </div>
 
         <div>
