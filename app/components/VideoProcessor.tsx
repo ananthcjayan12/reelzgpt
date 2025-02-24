@@ -1,0 +1,126 @@
+import React, { useState } from 'react';
+import { useProjectActions, useProcessingState, useScenes } from '@/lib/store';
+import { ProjectService } from '@/lib/services/project';
+import { Scene } from '@/types';
+
+export function VideoProcessor() {
+  const [url, setUrl] = useState('');
+  const { isProcessing, progress } = useProcessingState();
+  const scenes = useScenes();
+  const { setError } = useProjectActions();
+  const projectService = new ProjectService();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!url) return;
+
+    try {
+      // Create new project
+      await projectService.createProject(url);
+
+      // TODO: Extract YouTube transcription
+      const mockTranscription = "This is a test transcription. We'll implement YouTube extraction later.";
+
+      // Generate scenes
+      await projectService.generateScenes(mockTranscription);
+
+      // Process scenes
+      if (scenes.length > 0) {
+        await projectService.processScenes(scenes);
+      }
+
+      // Generate final video
+      const video = await projectService.generateVideo(scenes);
+      
+      // Create download link
+      const videoUrl = URL.createObjectURL(video);
+      const a = document.createElement('a');
+      a.href = videoUrl;
+      a.download = 'generated-video.mp4';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(videoUrl);
+
+    } catch (error: any) {
+      setError({
+        stage: 'video-processing',
+        message: error.message,
+        details: error,
+        timestamp: new Date(),
+      });
+    }
+  };
+
+  return (
+    <div className="w-full max-w-2xl mx-auto space-y-8">
+      <div className="space-y-4">
+        <h1 className="text-2xl font-bold text-center">
+          Generate AI Videos from YouTube Content
+        </h1>
+        <p className="text-gray-500 text-center">
+          Enter a YouTube URL to create an AI-powered video with narration and visuals
+        </p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="flex gap-2">
+          <input
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="Enter YouTube URL"
+            className="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={isProcessing}
+          />
+          <button
+            type="submit"
+            disabled={isProcessing || !url}
+            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isProcessing ? 'Processing...' : 'Generate'}
+          </button>
+        </div>
+      </form>
+
+      {isProcessing && progress && (
+        <div className="space-y-2">
+          <p className="text-sm text-gray-500">{progress.message}</p>
+          <div className="h-1 w-full bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-blue-500 transition-all duration-300"
+              style={{ width: `${progress.progress * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {scenes.length > 0 && !isProcessing && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold">Generated Scenes</h2>
+          <div className="grid gap-4">
+            {scenes.map((scene) => (
+              <ScenePreview key={scene.id} scene={scene} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScenePreview({ scene }: { scene: Scene }) {
+  return (
+    <div className="p-4 border rounded-lg space-y-2">
+      <p className="font-medium">Scene {scene.order}</p>
+      <p className="text-sm text-gray-600">{scene.narration}</p>
+      {scene.image && (
+        <img
+          src={scene.image}
+          alt={`Scene ${scene.order}`}
+          className="w-full h-48 object-cover rounded-lg"
+        />
+      )}
+    </div>
+  );
+} 
