@@ -52,19 +52,32 @@ export class VideoProcessor {
     }
   }
 
-  async createVideoSegment(inputBuffer: Buffer, outputName: string, startTime: number, duration: number) {
+  async createVideoSegment(imageBuffer: Buffer, audioBlob: Blob, outputName: string, duration: number) {
     try {
       await this.ensureInitialized();
       
-      // Write the input file to memory
-      this.ffmpeg.FS('writeFile', 'input.mp4', new Uint8Array(inputBuffer));
+      // Write the image file to memory
+      this.ffmpeg.FS('writeFile', 'image.png', new Uint8Array(imageBuffer));
 
-      // Run FFmpeg command
+      // Convert audio blob to buffer and write to memory
+      const audioArrayBuffer = await audioBlob.arrayBuffer();
+      this.ffmpeg.FS('writeFile', 'audio.mp3', new Uint8Array(audioArrayBuffer));
+
+      // Create video from image and audio
       await this.ffmpeg.run(
-        '-i', 'input.mp4',
-        '-ss', startTime.toString(),
+        // Input image
+        '-loop', '1',
+        '-i', 'image.png',
+        // Input audio
+        '-i', 'audio.mp3',
+        // Video settings
+        '-c:v', 'libx264',
+        '-tune', 'stillimage',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-pix_fmt', 'yuv420p',
+        '-shortest',
         '-t', duration.toString(),
-        '-c', 'copy',
         outputName
       );
 
@@ -72,7 +85,8 @@ export class VideoProcessor {
       const data = this.ffmpeg.FS('readFile', outputName);
 
       // Clean up
-      this.ffmpeg.FS('unlink', 'input.mp4');
+      this.ffmpeg.FS('unlink', 'image.png');
+      this.ffmpeg.FS('unlink', 'audio.mp3');
       this.ffmpeg.FS('unlink', outputName);
 
       return Buffer.from(data.buffer);
@@ -127,21 +141,11 @@ export class VideoProcessor {
     }
   }
 
-  async processCompleteVideo(scenes: { buffer: Buffer; duration: number }[]) {
+  async processCompleteVideo(segments: Buffer[]) {
     try {
       await this.ensureInitialized();
       
-      const segments = await Promise.all(
-        scenes.map(async (scene, index) => {
-          return this.createVideoSegment(
-            scene.buffer,
-            `segment${index}.mp4`,
-            0,
-            scene.duration
-          );
-        })
-      );
-
+      // Concatenate all segments into final video
       const finalVideo = await this.concatenateVideos(segments, 'output.mp4');
       return finalVideo;
     } catch (error) {
@@ -160,30 +164,52 @@ export class VideoProcessor {
     try {
       await this.ensureInitialized();
       
-      // Convert scenes to video segments
-      const segments = await Promise.all(
-        scenes.map(async (scene) => {
-          if (!scene.audio || !scene.image) {
-            throw new ProcessingError({
-              stage: 'video-processing',
-              message: `Missing audio or image for scene ${scene.order}`,
-              timestamp: new Date(),
-            });
-          }
+      // Convert scenes to video segments sequentially
+      const segments = [];
+      for (const scene of scenes) {
+        if (!scene.audio || !scene.image) {
+          throw new ProcessingError({
+            stage: 'video-processing',
+            message: `Missing audio or image for scene ${scene.order}`,
+            timestamp: new Date(),
+          });
+        }
 
-          // Create video segment from image and audio
-          const imageBuffer = await fetch(scene.image).then(res => res.arrayBuffer());
-          const audioBuffer = await scene.audio.arrayBuffer();
+        // Get image buffer
+        const imageBuffer = await fetch(scene.image).then(res => res.arrayBuffer());
+        
+        // Get audio as blob
+        let audioBlob: Blob;
+        if (typeof scene.audio === 'string') {
+          // If audio is a data URL, fetch it first
+          const response = await fetch(scene.audio);
+          audioBlob = await response.blob();
+        } else {
+          audioBlob = scene.audio;
+        }
 
-          return {
-            buffer: Buffer.from(imageBuffer),
-            duration: scene.audio.size / 16000 // Approximate duration based on audio size
-          };
-        })
-      );
+        // Get audio duration
+        const audioDuration = await this.getAudioDuration(audioBlob);
+        if (!audioDuration) {
+          throw new ProcessingError({
+            stage: 'video-processing',
+            message: `Could not determine audio duration for scene ${scene.order}`,
+            timestamp: new Date(),
+          });
+        }
 
-      // Process the complete video
-      const finalVideoBuffer = await this.processCompleteVideo(segments);
+        // Create video segment
+        const segment = await this.createVideoSegment(
+          Buffer.from(imageBuffer),
+          audioBlob,
+          `segment${segments.length}.mp4`,
+          audioDuration
+        );
+        segments.push(segment);
+      }
+
+      // Concatenate all segments
+      const finalVideoBuffer = await this.concatenateVideos(segments, 'output.mp4');
       return new Blob([finalVideoBuffer], { type: 'video/mp4' });
     } catch (error: any) {
       throw new ProcessingError({
@@ -192,5 +218,24 @@ export class VideoProcessor {
         timestamp: new Date(),
       });
     }
+  }
+
+  private getAudioDuration(audioBlob: Blob): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio();
+      
+      audio.addEventListener('loadedmetadata', () => {
+        URL.revokeObjectURL(audioUrl);
+        resolve(audio.duration);
+      });
+
+      audio.addEventListener('error', () => {
+        URL.revokeObjectURL(audioUrl);
+        reject(new Error('Failed to load audio'));
+      });
+
+      audio.src = audioUrl;
+    });
   }
 } 

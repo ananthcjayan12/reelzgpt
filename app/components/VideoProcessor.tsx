@@ -125,8 +125,22 @@ export function VideoProcessor() {
         throw new Error('Please generate all audio and images before creating the video');
       }
 
-      // Generate final video
-      const video = await projectService.generateVideo(scenes);
+      // Process scenes sequentially
+      const processedScenes = [];
+      for (const scene of scenes) {
+        // Convert data URL to Blob
+        const audioDataUrl = scene.audio as string;
+        const response = await fetch(audioDataUrl);
+        const audioBlob = await response.blob();
+
+        processedScenes.push({
+          ...scene,
+          audio: audioBlob
+        });
+      }
+
+      // Generate final video with processed scenes
+      const video = await projectService.generateVideo(processedScenes);
       
       // Create download link
       const videoUrl = URL.createObjectURL(video);
