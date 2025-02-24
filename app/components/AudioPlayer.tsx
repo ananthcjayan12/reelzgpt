@@ -3,17 +3,29 @@
 import React, { useEffect, useState } from 'react';
 
 interface AudioPlayerProps {
-  audioBlob: Blob;
+  audioBlob: Blob | string;
 }
 
 export function AudioPlayer({ audioBlob }: AudioPlayerProps) {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!audioBlob) return;
+
+    // If audioBlob is already a string URL, use it directly
+    if (typeof audioBlob === 'string') {
+      setAudioUrl(audioBlob);
+      return;
+    }
+
+    // If it's a Blob, create a URL
     const url = URL.createObjectURL(audioBlob);
     setAudioUrl(url);
+
     return () => {
-      if (url) URL.revokeObjectURL(url);
+      if (url && typeof audioBlob !== 'string') {
+        URL.revokeObjectURL(url);
+      }
     };
   }, [audioBlob]);
 

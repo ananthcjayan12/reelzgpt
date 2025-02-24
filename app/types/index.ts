@@ -4,7 +4,7 @@ export interface Scene {
   narration: string;
   imagePrompt: string;
   mood: 'adventure' | 'dramatic' | 'happy' | 'romantic' | 'suspense';
-  audio?: Blob;
+  audio?: Blob | string;
   image?: string;
   order: number;
   status: {

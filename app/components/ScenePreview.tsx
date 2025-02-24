@@ -6,12 +6,14 @@ import { generateAudio } from '@/lib/services/openai';
 import { generateImage } from '@/lib/services/replicate';
 import { useProjectActions } from '@/lib/store';
 import { AudioPlayer } from './AudioPlayer';
+import { Trash2 } from 'lucide-react';
 
 interface ScenePreviewProps {
   scene: Scene;
+  onDelete: (sceneId: string) => void;
 }
 
-export function ScenePreview({ scene }: ScenePreviewProps) {
+export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
   const { updateScene, setError } = useProjectActions();
   const [isGeneratingAudio, setIsGeneratingAudio] = React.useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = React.useState(false);
@@ -27,8 +29,16 @@ export function ScenePreview({ scene }: ScenePreviewProps) {
     setIsGeneratingAudio(true);
     try {
       const audio = await generateAudio(narration);
+      
+      // Convert Blob to data URL for storage
+      const audioUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(audio);
+      });
+
       updateScene(scene.id, {
-        audio,
+        audio: audioUrl,
         status: { ...status, audioGenerated: true }
       });
     } catch (error: any) {
@@ -77,11 +87,17 @@ export function ScenePreview({ scene }: ScenePreviewProps) {
     setIsEditingPrompt(false);
   };
 
+  const handleDelete = () => {
+    if (confirm('Are you sure you want to delete this scene? This action cannot be undone.')) {
+      onDelete(scene.id);
+    }
+  };
+
   return (
     <div className="p-6 border rounded-lg space-y-4 bg-white">
       <div className="flex justify-between items-start">
         <h3 className="font-medium">Scene {scene.order}</h3>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <button
             onClick={handleGenerateAudio}
             disabled={isGeneratingAudio || status.audioGenerated}
@@ -95,6 +111,13 @@ export function ScenePreview({ scene }: ScenePreviewProps) {
             className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isGeneratingImage ? 'Generating...' : status.imageGenerated ? 'Image Generated' : 'Generate Image'}
+          </button>
+          <button
+            onClick={handleDelete}
+            className="p-1 text-red-500 hover:bg-red-50 rounded"
+            title="Delete scene"
+          >
+            <Trash2 className="w-5 h-5" />
           </button>
         </div>
       </div>
