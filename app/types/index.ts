@@ -7,6 +7,10 @@ export interface Scene {
   audio?: Blob;
   image?: string;
   order: number;
+  status: {
+    audioGenerated: boolean;
+    imageGenerated: boolean;
+  };
 }
 
 // YouTubeDetails contains metadata about the source YouTube video

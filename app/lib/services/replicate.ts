@@ -1,20 +1,6 @@
-import Replicate from 'replicate';
-import { ProcessingError } from '@/types';
+'use client';
 
-// Initialize Replicate client
-const replicate = new Replicate({
-  auth: process.env.NEXT_PUBLIC_REPLICATE_API_TOKEN,
-});
-
-// Error handler utility
-const handleError = (error: any, stage: string): ProcessingError => {
-  return {
-    stage,
-    message: error.message || 'An unknown error occurred',
-    details: error.response?.data || error,
-    timestamp: new Date(),
-  };
-};
+import { useSettingsStore } from '@/lib/store/settings';
 
 interface ImageGenerationOptions {
   isReel?: boolean;
@@ -42,7 +28,14 @@ const enhancePrompt = (prompt: string): string => {
 };
 
 /**
- * Generates an image using Replicate's API
+ * Proxies an image URL through our server to handle CORS
+ */
+const proxyImageUrl = (url: string): string => {
+  return `/api/replicate/image?url=${encodeURIComponent(url)}`;
+};
+
+/**
+ * Generates an image using Replicate's API through server-side route
  */
 export async function generateImage(
   prompt: string,
@@ -54,35 +47,46 @@ export async function generateImage(
   };
 
   const finalPrompt = shouldEnhancePrompt ? enhancePrompt(prompt) : prompt;
-  const aspectRatio = isReel ? "9:16" : "16:9";
   const width = isReel ? 1080 : 1920;
   const height = isReel ? 1920 : 1080;
 
   let lastError: any;
   
+  // Get API key from settings
+  const settings = useSettingsStore.getState();
+  const apiKey = settings.replicateApiKey;
+
+  if (!apiKey) {
+    throw new Error('Replicate API token is not set. Please configure it in settings.');
+  }
+
   // Implement retry logic
   for (let attempt = 1; attempt <= retryCount; attempt++) {
     try {
-      const output = await replicate.run(
-        "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
-        {
-          input: {
-            prompt: finalPrompt,
-            negative_prompt: "blurry, low quality, distorted, deformed, ugly, bad anatomy",
-            width,
-            height,
-            scheduler: "K_EULER",
-            num_outputs: 1,
-            guidance_scale: 7.5,
-            num_inference_steps: 50,
-            seed: Math.floor(Math.random() * 1000000)
-          }
-        }
-      );
+      const response = await fetch('/api/replicate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt: finalPrompt,
+          width,
+          height,
+          apiKey,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to generate image');
+      }
+
+      const { output } = await response.json();
 
       // Replicate returns an array of image URLs
       if (Array.isArray(output) && output.length > 0) {
-        return output[0];
+        // Return proxied URL instead of direct Replicate URL
+        return proxyImageUrl(output[0]);
       }
 
       throw new Error('No image was generated');
@@ -95,12 +99,12 @@ export async function generateImage(
         continue;
       }
       
-      throw handleError(lastError, 'image-generation');
+      throw new Error(error.message || 'Failed to generate image');
     }
   }
 
   // This should never be reached due to the throw in the loop
-  throw handleError(lastError || new Error('Failed to generate image'), 'image-generation');
+  throw new Error(lastError?.message || 'Failed to generate image');
 }
 
 /**
@@ -125,9 +129,24 @@ export async function generateThumbnail(
  */
 export async function validateApiKey(): Promise<boolean> {
   try {
-    // Attempt to list models as a validation check
-    await replicate.models.list();
-    return true;
+    const settings = useSettingsStore.getState();
+    const apiKey = settings.replicateApiKey;
+    if (!apiKey) return false;
+
+    const response = await fetch('/api/replicate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: 'test',
+        width: 512,
+        height: 512,
+        apiKey,
+      }),
+    });
+
+    return response.ok;
   } catch (error) {
     console.error('Replicate API key validation failed:', error);
     return false;
@@ -139,12 +158,15 @@ export async function validateApiKey(): Promise<boolean> {
  */
 export async function downloadImage(url: string): Promise<Blob> {
   try {
-    const response = await fetch(url);
+    // If the URL is already proxied, use it directly
+    const imageUrl = url.startsWith('/api/replicate/image') ? url : proxyImageUrl(url);
+    
+    const response = await fetch(imageUrl);
     if (!response.ok) {
       throw new Error(`Failed to download image: ${response.statusText}`);
     }
     return await response.blob();
   } catch (error: any) {
-    throw handleError(error, 'image-download');
+    throw new Error(error.message || 'Failed to download image');
   }
-} 
+}

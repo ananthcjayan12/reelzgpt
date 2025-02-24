@@ -1,20 +1,41 @@
 import OpenAI from 'openai';
-import { Scene, YouTubeDetails, ProcessingError } from '@/types';
+import { Scene, YouTubeDetails } from '@/types';
+import { ProcessingError } from '../types/errors';
+import { useSettingsStore } from '@/lib/store/settings';
 
-// Initialize OpenAI client with browser support
-const openai = new OpenAI({
-  apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true // Enable browser usage
-});
+// Initialize OpenAI client with dynamic configuration
+const getOpenAIClient = () => {
+  const settings = useSettingsStore.getState();
+  const openaiApiKey = settings.openaiApiKey;
+  
+  if (!openaiApiKey) {
+    throw new ProcessingError({
+      stage: 'openai-initialization',
+      message: 'OpenAI API key is not set. Please configure it in settings.',
+      timestamp: new Date(),
+    });
+  }
+
+  return new OpenAI({
+    apiKey: openaiApiKey,
+    dangerouslyAllowBrowser: true
+  });
+};
 
 // Error handler utility
 const handleError = (error: any, stage: string): ProcessingError => {
-  return {
+  if (error.response?.status === 401) {
+    return new ProcessingError({
+      stage,
+      message: 'Invalid or missing API key. Please check your OpenAI API key in settings.',
+      timestamp: new Date(),
+    });
+  }
+  return new ProcessingError({
     stage,
     message: error.message || 'An unknown error occurred',
-    details: error.response?.data || error,
     timestamp: new Date(),
-  };
+  });
 };
 
 export async function generateScenesAndDetails(transcription: string): Promise<{
@@ -22,8 +43,11 @@ export async function generateScenesAndDetails(transcription: string): Promise<{
   youtubeDetails: YouTubeDetails;
 }> {
   try {
+    const openai = getOpenAIClient();
+    const { selectedModel } = useSettingsStore.getState();
+
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: selectedModel,
       messages: [
         {
           role: "system",
@@ -124,6 +148,8 @@ export async function generateScenesAndDetails(transcription: string): Promise<{
 
 export async function generateAudio(text: string): Promise<Blob> {
   try {
+    const openai = getOpenAIClient();
+
     const response = await openai.audio.speech.create({
       model: "tts-1",
       voice: "onyx",
@@ -141,6 +167,14 @@ export async function generateAudio(text: string): Promise<Blob> {
 // Utility function to validate OpenAI API key
 export async function validateApiKey(): Promise<boolean> {
   try {
+    const { openaiApiKey } = useSettingsStore.getState();
+    if (!openaiApiKey) return false;
+
+    const openai = new OpenAI({
+      apiKey: openaiApiKey,
+      dangerouslyAllowBrowser: true
+    });
+
     await openai.models.list();
     return true;
   } catch (error) {

@@ -1,13 +1,17 @@
+'use client';
+
 import React, { useState } from 'react';
 import { useProjectActions, useProcessingState, useScenes } from '@/lib/store';
 import { ProjectService } from '@/lib/services/project';
+import { getOrCreateTranscription } from '@/lib/services/youtube';
 import { Scene } from '@/types';
+import { ScenePreview } from '@/components/ScenePreview';
 
 export function VideoProcessor() {
   const [url, setUrl] = useState('');
   const { isProcessing, progress } = useProcessingState();
   const scenes = useScenes();
-  const { setError } = useProjectActions();
+  const { setError, setScenes } = useProjectActions();
   const projectService = new ProjectService();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -18,15 +22,47 @@ export function VideoProcessor() {
       // Create new project
       await projectService.createProject(url);
 
-      // TODO: Extract YouTube transcription
-      const mockTranscription = "This is a test transcription. We'll implement YouTube extraction later.";
+      // Get YouTube transcription
+      const transcription = await getOrCreateTranscription(url);
+      console.log('Transcription:', transcription);
 
-      // Generate scenes
-      await projectService.generateScenes(mockTranscription);
+      // Generate scenes (only narration and prompts)
+      const result = await projectService.generateScenes(transcription);
+      
+      // Initialize scenes with status
+      const scenesWithStatus = result.scenes.map((scene: Omit<Scene, 'status'>) => ({
+        ...scene,
+        status: {
+          audioGenerated: false,
+          imageGenerated: false
+        }
+      }));
+      
+      setScenes(scenesWithStatus);
 
-      // Process scenes
-      if (scenes.length > 0) {
-        await projectService.processScenes(scenes);
+    } catch (error: any) {
+      setError({
+        stage: 'video-processing',
+        message: error.message,
+        details: error,
+        timestamp: new Date(),
+      });
+    }
+  };
+
+  const handleGenerateVideo = async () => {
+    try {
+      if (!scenes || scenes.length === 0) {
+        throw new Error('No scenes available to process');
+      }
+
+      // Check if all scenes have audio and images
+      const allScenesReady = scenes.every(
+        scene => scene.status?.audioGenerated && scene.status?.imageGenerated
+      );
+
+      if (!allScenesReady) {
+        throw new Error('Please generate all audio and images before creating the video');
       }
 
       // Generate final video
@@ -53,7 +89,7 @@ export function VideoProcessor() {
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto space-y-8">
+    <div className="w-full max-w-4xl mx-auto space-y-8">
       <div className="space-y-4">
         <h1 className="text-2xl font-bold text-center">
           Generate AI Videos from YouTube Content
@@ -78,7 +114,7 @@ export function VideoProcessor() {
             disabled={isProcessing || !url}
             className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isProcessing ? 'Processing...' : 'Generate'}
+            {isProcessing ? 'Processing...' : 'Generate Scenes'}
           </button>
         </div>
       </form>
@@ -96,30 +132,23 @@ export function VideoProcessor() {
       )}
 
       {scenes.length > 0 && !isProcessing && (
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold">Generated Scenes</h2>
-          <div className="grid gap-4">
+        <div className="space-y-6">
+          <div className="flex justify-between items-center">
+            <h2 className="text-lg font-semibold">Generated Scenes</h2>
+            <button
+              onClick={handleGenerateVideo}
+              disabled={!scenes.every(scene => scene.status?.audioGenerated && scene.status?.imageGenerated)}
+              className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Generate Final Video
+            </button>
+          </div>
+          <div className="grid gap-6">
             {scenes.map((scene) => (
               <ScenePreview key={scene.id} scene={scene} />
             ))}
           </div>
         </div>
-      )}
-    </div>
-  );
-}
-
-function ScenePreview({ scene }: { scene: Scene }) {
-  return (
-    <div className="p-4 border rounded-lg space-y-2">
-      <p className="font-medium">Scene {scene.order}</p>
-      <p className="text-sm text-gray-600">{scene.narration}</p>
-      {scene.image && (
-        <img
-          src={scene.image}
-          alt={`Scene ${scene.order}`}
-          className="w-full h-48 object-cover rounded-lg"
-        />
       )}
     </div>
   );

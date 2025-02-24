@@ -1,3 +1,5 @@
+'use client';
+
 import { create } from 'zustand';
 import { Scene, Project, YouTubeDetails, ProgressStatus, ProcessingError } from '@/types';
 
@@ -37,11 +39,8 @@ export const useProjectStore = create<ProjectState>((set) => ({
 
   // Project actions
   setProject: (project) => set({ project }),
-  
   setScenes: (scenes) => set({ scenes }),
-  
   setYouTubeDetails: (youtubeDetails) => set({ youtubeDetails }),
-  
   updateScene: (sceneId, updates) =>
     set((state) => ({
       scenes: state.scenes.map((scene) =>
@@ -51,9 +50,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
 
   // Processing state actions
   setProcessing: (isProcessing) => set({ isProcessing }),
-  
   setProgress: (progress) => set({ progress }),
-  
   setError: (error) => set({ error }),
 
   // Reset state

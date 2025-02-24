@@ -62,7 +62,7 @@ export class ProjectService {
   /**
    * Generates scenes and details from transcription
    */
-  async generateScenes(transcription: string): Promise<void> {
+  async generateScenes(transcription: string): Promise<{ scenes: Scene[]; youtubeDetails: YouTubeDetails }> {
     const { setScenes, setYouTubeDetails, setProcessing, setProgress, setError } = useProjectStore.getState();
     
     try {
@@ -83,6 +83,8 @@ export class ProjectService {
         progress: 1,
         message: 'Scene generation complete'
       });
+
+      return { scenes, youtubeDetails };
     } catch (error: any) {
       setError({
         stage: 'scene-generation',

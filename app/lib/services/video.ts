@@ -1,4 +1,6 @@
 import { ProcessingError } from '../types/errors';
+import { Scene } from '@/types';
+import { CreateFFmpegOptions } from '@ffmpeg/ffmpeg';
 
 export class VideoProcessor {
   private ffmpeg: any;
@@ -19,16 +21,17 @@ export class VideoProcessor {
 
       const { createFFmpeg } = await import('@ffmpeg/ffmpeg');
       
-      this.ffmpeg = createFFmpeg({
+      const config: CreateFFmpegOptions = {
         log: true,
         progress: ({ ratio }: { ratio: number }) => {
           if (this.progressCallback) {
             this.progressCallback(ratio);
           }
         },
-        corePath: '/ffmpeg/ffmpeg-core.js',
-        workerPath: '/ffmpeg/ffmpeg-core.worker.js'
-      });
+        corePath: '/ffmpeg/ffmpeg-core.js'
+      };
+
+      this.ffmpeg = createFFmpeg(config);
 
       await this.ffmpeg.load();
       this.isInitialized = true;
@@ -145,6 +148,47 @@ export class VideoProcessor {
       throw new ProcessingError({
         stage: 'complete_processing',
         message: `Failed to process complete video: ${error}`,
+        timestamp: new Date(),
+      });
+    }
+  }
+
+  /**
+   * Process a complete video from scenes with audio and images
+   */
+  async processVideo(scenes: Scene[]): Promise<Blob> {
+    try {
+      await this.ensureInitialized();
+      
+      // Convert scenes to video segments
+      const segments = await Promise.all(
+        scenes.map(async (scene) => {
+          if (!scene.audio || !scene.image) {
+            throw new ProcessingError({
+              stage: 'video-processing',
+              message: `Missing audio or image for scene ${scene.order}`,
+              timestamp: new Date(),
+            });
+          }
+
+          // Create video segment from image and audio
+          const imageBuffer = await fetch(scene.image).then(res => res.arrayBuffer());
+          const audioBuffer = await scene.audio.arrayBuffer();
+
+          return {
+            buffer: Buffer.from(imageBuffer),
+            duration: scene.audio.size / 16000 // Approximate duration based on audio size
+          };
+        })
+      );
+
+      // Process the complete video
+      const finalVideoBuffer = await this.processCompleteVideo(segments);
+      return new Blob([finalVideoBuffer], { type: 'video/mp4' });
+    } catch (error: any) {
+      throw new ProcessingError({
+        stage: 'video-processing',
+        message: error.message || 'Failed to process video',
         timestamp: new Date(),
       });
     }
