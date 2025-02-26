@@ -1,6 +1,7 @@
 'use client';
 
 import { useSettingsStore } from '@/lib/store/settings';
+import { usePromptStore } from '@/lib/store/prompts';
 
 interface ImageGenerationOptions {
   isReel?: boolean;
@@ -14,25 +15,47 @@ const defaultOptions: Required<ImageGenerationOptions> = {
   retryCount: 3,
 };
 
-/**
- * Enhances the image generation prompt for better results
- */
-const enhancePrompt = (prompt: string): string => {
-  const enhancers = [
-    "high quality, detailed, sharp focus",
-    "cinematic lighting",
-    "professional photography",
-    "4K, high resolution",
-  ];
-  return `${prompt}, ${enhancers.join(", ")}`;
-};
+// Validate Replicate API key
+export async function validateApiKey(): Promise<boolean> {
+  try {
+    const { replicateApiKey } = useSettingsStore.getState();
+    if (!replicateApiKey) return false;
 
-/**
- * Proxies an image URL through our server to handle CORS
- */
-const proxyImageUrl = (url: string): string => {
+    const response = await fetch('/api/replicate/validate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ apiKey: replicateApiKey }),
+    });
+
+    return response.ok;
+  } catch (error) {
+    console.error('Replicate API key validation failed:', error);
+    return false;
+  }
+}
+
+// Helper function to enhance image prompts using the template from the store
+function enhancePrompt(prompt: string, isReel: boolean = false): string {
+  const { imageEnhancementTemplate, imageEnhancementEnabled } = usePromptStore.getState();
+  
+  if (!imageEnhancementEnabled) return prompt;
+  
+  const aspectRatio = isReel ? "vertical (9:16)" : "horizontal (16:9)";
+  return imageEnhancementTemplate
+    .replace('{prompt}', prompt)
+    .replace('{aspect_ratio}', aspectRatio);
+}
+
+// Helper function to proxy image URLs through our own server to avoid CORS issues
+function proxyImageUrl(url: string): string {
+  // If we're already using a proxied URL, return it
+  if (url.startsWith('/api/replicate/image')) return url;
+  
+  // Otherwise, proxy the URL through our own server
   return `/api/replicate/image?url=${encodeURIComponent(url)}`;
-};
+}
 
 /**
  * Generates an image using Replicate's API through server-side route
@@ -46,7 +69,7 @@ export async function generateImage(
     ...options,
   };
 
-  const finalPrompt = shouldEnhancePrompt ? enhancePrompt(prompt) : prompt;
+  const finalPrompt = shouldEnhancePrompt ? enhancePrompt(prompt, isReel) : prompt;
   
   // Set dimensions based on video format
   const width = isReel ? 1080 : 1920;
@@ -106,8 +129,8 @@ export async function generateImage(
     }
   }
 
-  // This should never be reached due to the throw in the loop
-  throw new Error(lastError?.message || 'Failed to generate image');
+  // This should never be reached due to the throw in the loop, but TypeScript requires it
+  throw new Error(lastError?.message || 'Failed to generate image after multiple attempts');
 }
 
 /**
@@ -128,48 +151,28 @@ export async function generateThumbnail(
 }
 
 /**
- * Validates the Replicate API token
- */
-export async function validateApiKey(): Promise<boolean> {
-  try {
-    const settings = useSettingsStore.getState();
-    const apiKey = settings.replicateApiKey;
-    if (!apiKey) return false;
-
-    const response = await fetch('/api/replicate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        prompt: 'test',
-        width: 512,
-        height: 512,
-        apiKey,
-      }),
-    });
-
-    return response.ok;
-  } catch (error) {
-    console.error('Replicate API key validation failed:', error);
-    return false;
-  }
-}
-
-/**
- * Downloads and converts an image URL to a Blob
+ * Downloads an image from a URL and returns it as a Blob
  */
 export async function downloadImage(url: string): Promise<Blob> {
   try {
-    // If the URL is already proxied, use it directly
-    const imageUrl = url.startsWith('/api/replicate/image') ? url : proxyImageUrl(url);
+    console.log('[Replicate] Downloading image from:', url);
     
-    const response = await fetch(imageUrl);
+    const response = await fetch(url);
+    
     if (!response.ok) {
+      console.error('[Replicate] Image download failed with status:', response.status, response.statusText);
       throw new Error(`Failed to download image: ${response.statusText}`);
     }
-    return await response.blob();
+    
+    const blob = await response.blob();
+    console.log('[Replicate] Image downloaded successfully:', {
+      type: blob.type,
+      size: blob.size
+    });
+    
+    return blob;
   } catch (error: any) {
-    throw new Error(error.message || 'Failed to download image');
+    console.error('[Replicate] Image download error:', error);
+    throw new Error(`Failed to download image: ${error.message}`);
   }
 }

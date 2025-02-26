@@ -155,20 +155,54 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
   const handleGenerateImage = async () => {
     setIsGeneratingImage(true);
     try {
+      console.log('[ScenePreview] Starting image generation for scene:', scene.id);
+      
       // Initialize file system with user interaction
+      console.log('[ScenePreview] Initializing file system...');
       await fileSystem.initialize(true);
       
+      // Step 1: Generate image URL
+      console.log('[ScenePreview] Generating image with prompt:', imagePrompt);
       const imageUrl = await generateImage(imagePrompt, {
         isReel: currentProject?.videoFormat === 'reel'
       });
-      const image = await downloadImage(imageUrl);
-      const imagePath = await fileSystem.saveFile(image, `scene-${scene.id}-image.png`, 'image');
+      console.log('[ScenePreview] Image URL generated:', imageUrl);
       
+      // Step 2: Download image
+      console.log('[ScenePreview] Downloading image...');
+      const image = await downloadImage(imageUrl);
+      console.log('[ScenePreview] Image downloaded successfully:', {
+        type: image.type,
+        size: image.size
+      });
+      
+      // Step 3: Save image to filesystem
+      console.log('[ScenePreview] Saving image to filesystem...');
+      const filename = `scene-${scene.id}-image.png`;
+      const imagePath = await fileSystem.saveFile(image, filename, 'image');
+      console.log('[ScenePreview] Image saved at:', imagePath);
+      
+      // Step 4: Update scene
+      console.log('[ScenePreview] Updating scene with new image path');
       updateScene(scene.id, {
         imagePath,
         status: { ...status, imageGenerated: true }
       });
+      
+      // Step 5: Verify file exists
+      try {
+        const savedImage = await fileSystem.readFile(imagePath, 'image');
+        console.log('[ScenePreview] Verified saved image:', {
+          type: savedImage.type,
+          size: savedImage.size
+        });
+      } catch (verifyError) {
+        console.error('[ScenePreview] Failed to verify saved image:', verifyError);
+        throw new Error('Failed to verify saved image file');
+      }
+      
     } catch (error: any) {
+      console.error('[ScenePreview] Image generation error:', error);
       setError({
         stage: 'image-generation',
         message: error.message,

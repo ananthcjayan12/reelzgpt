@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { Scene, YouTubeDetails } from '@/types';
 import { ProcessingError } from '../types/errors';
 import { useSettingsStore } from '@/lib/store/settings';
+import { usePromptStore } from '@/lib/store/prompts';
 
 // Initialize OpenAI client with dynamic configuration
 const getOpenAIClient = () => {
@@ -22,21 +23,32 @@ const getOpenAIClient = () => {
   });
 };
 
-// Error handler utility
-const handleError = (error: any, stage: string): ProcessingError => {
-  if (error.response?.status === 401) {
-    return new ProcessingError({
-      stage,
-      message: 'Invalid or missing API key. Please check your OpenAI API key in settings.',
-      timestamp: new Date(),
-    });
+// Helper function to handle errors
+const handleError = (error: any, stage: string): never => {
+  console.error(`[OpenAI] Error in ${stage}:`, error);
+  
+  if (error instanceof ProcessingError) {
+    throw error;
   }
-  return new ProcessingError({
+  
+  throw new ProcessingError({
     stage,
-    message: error.message || 'An unknown error occurred',
+    message: error.message || 'Unknown error',
     timestamp: new Date(),
   });
 };
+
+// Validate OpenAI API key
+export async function validateApiKey(): Promise<boolean> {
+  try {
+    const openai = getOpenAIClient();
+    await openai.models.list();
+    return true;
+  } catch (error) {
+    console.error('[OpenAI] API key validation error:', error);
+    return false;
+  }
+}
 
 export async function generateScenesAndDetails(transcription: string): Promise<{
   scenes: Scene[];
@@ -45,22 +57,26 @@ export async function generateScenesAndDetails(transcription: string): Promise<{
   try {
     const openai = getOpenAIClient();
     const { selectedModel } = useSettingsStore.getState();
+    const { 
+      sceneGenerationSystemPrompt, 
+      sceneGenerationUserPrompt,
+      narrationDescription,
+      imagePromptDescription
+    } = usePromptStore.getState();
+
+    // Replace placeholders in the user prompt
+    const formattedUserPrompt = sceneGenerationUserPrompt.replace('{transcription}', transcription);
 
     const completion = await openai.chat.completions.create({
       model: selectedModel,
       messages: [
         {
           role: "system",
-          content: `You are a creative video script writer and scene designer. Your task is to:
-          1. Break down the transcription into engaging scenes
-          2. Create compelling narration for each scene
-          3. Generate detailed image prompts for scene visualization
-          4. Assign appropriate moods to each scene
-          5. Create an engaging YouTube title and description`
+          content: sceneGenerationSystemPrompt
         },
         {
           role: "user",
-          content: `Create an engaging video script and scenes from this transcription: "${transcription}"`
+          content: formattedUserPrompt
         }
       ],
       tools: [
@@ -79,11 +95,11 @@ export async function generateScenesAndDetails(transcription: string): Promise<{
                     properties: {
                       narration: {
                         type: "string",
-                        description: "Scene narration text (max 200 words)"
+                        description: narrationDescription
                       },
                       imagePrompt: {
                         type: "string",
-                        description: "Detailed prompt for image generation"
+                        description: imagePromptDescription
                       },
                       mood: {
                         type: "string",
@@ -151,10 +167,13 @@ export async function generateAudio(text: string): Promise<Blob> {
     console.log('[OpenAI] Starting audio generation with text:', text);
     const openai = getOpenAIClient();
     console.log('[OpenAI] Client initialized');
+    
+    // Get voice from prompt store
+    const { audioVoice } = usePromptStore.getState();
 
     const response = await openai.audio.speech.create({
       model: "tts-1",
-      voice: "onyx",
+      voice: audioVoice,
       input: text,
     });
     console.log('[OpenAI] Received audio response');
@@ -173,24 +192,5 @@ export async function generateAudio(text: string): Promise<Blob> {
   } catch (error: any) {
     console.error('[OpenAI] Audio generation error:', error);
     throw handleError(error, 'audio-generation');
-  }
-}
-
-// Utility function to validate OpenAI API key
-export async function validateApiKey(): Promise<boolean> {
-  try {
-    const { openaiApiKey } = useSettingsStore.getState();
-    if (!openaiApiKey) return false;
-
-    const openai = new OpenAI({
-      apiKey: openaiApiKey,
-      dangerouslyAllowBrowser: true
-    });
-
-    await openai.models.list();
-    return true;
-  } catch (error) {
-    console.error('OpenAI API key validation failed:', error);
-    return false;
   }
 } 
