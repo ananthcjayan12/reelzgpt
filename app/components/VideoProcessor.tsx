@@ -119,7 +119,7 @@ export function VideoProcessor() {
 
   const handleGenerateVideo = async () => {
     try {
-      if (!scenes || scenes.length === 0) {
+      if (!scenes || scenes.length === 0 || !currentProject) {
         throw new Error('No scenes available to process');
       }
 
@@ -146,8 +146,8 @@ export function VideoProcessor() {
         });
       }
 
-      // Generate final video with processed scenes
-      const video = await projectService.generateVideo(processedScenes);
+      // Pass the currentProject to generateVideo
+      const video = await projectService.generateVideo(processedScenes, currentProject);
       
       // Create download link
       const videoUrl = URL.createObjectURL(video);

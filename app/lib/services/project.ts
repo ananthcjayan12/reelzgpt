@@ -148,7 +148,7 @@ export class ProjectService {
   /**
    * Generates the final video from processed scenes
    */
-  async generateVideo(scenes: Scene[]): Promise<Blob> {
+  async generateVideo(scenes: Scene[], project: Project): Promise<Blob> {
     const { setProcessing, setProgress, setError } = useProjectStore.getState();
     
     try {
@@ -159,7 +159,8 @@ export class ProjectService {
         message: 'Starting video generation...'
       });
 
-      const video = await this.videoProcessor.processVideo(scenes);
+      // Pass the project to the video processor
+      const video = await this.videoProcessor.processVideo(scenes, project);
 
       setProgress({
         stage: 'video-processing',
