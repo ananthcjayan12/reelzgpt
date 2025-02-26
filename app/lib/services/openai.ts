@@ -148,18 +148,30 @@ export async function generateScenesAndDetails(transcription: string): Promise<{
 
 export async function generateAudio(text: string): Promise<Blob> {
   try {
+    console.log('[OpenAI] Starting audio generation with text:', text);
     const openai = getOpenAIClient();
+    console.log('[OpenAI] Client initialized');
 
     const response = await openai.audio.speech.create({
       model: "tts-1",
       voice: "onyx",
       input: text,
     });
+    console.log('[OpenAI] Received audio response');
 
     // Convert the response to a Blob
     const audioData = await response.arrayBuffer();
-    return new Blob([audioData], { type: 'audio/mpeg' });
+    console.log('[OpenAI] Converted response to ArrayBuffer, size:', audioData.byteLength);
+    
+    const audioBlob = new Blob([audioData], { type: 'audio/mpeg' });
+    console.log('[OpenAI] Created audio blob:', {
+      type: audioBlob.type,
+      size: audioBlob.size
+    });
+    
+    return audioBlob;
   } catch (error: any) {
+    console.error('[OpenAI] Audio generation error:', error);
     throw handleError(error, 'audio-generation');
   }
 }

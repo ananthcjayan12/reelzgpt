@@ -4,8 +4,8 @@ export interface Scene {
   narration: string;
   imagePrompt: string;
   mood: 'adventure' | 'dramatic' | 'happy' | 'romantic' | 'suspense';
-  audio?: Blob | string;
-  image?: string;
+  audioPath?: string;  // Path to the audio file in local storage
+  imagePath?: string;  // Path to the image file in local storage
   order: number;
   status: {
     audioGenerated: boolean;

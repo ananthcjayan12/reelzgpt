@@ -12,7 +12,7 @@ export function ProjectList() {
   if (projects.length === 0) {
     return (
       <div className="text-center text-gray-500 py-8">
-        No projects yet. Enter a YouTube URL to create your first project.
+        No projects yet. Enter a YouTube URL to create yourdsds first project.
       </div>
     );
   }

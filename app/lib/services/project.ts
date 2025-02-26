@@ -4,12 +4,15 @@ import { generateScenesAndDetails, generateAudio } from './openai';
 import { generateImage, generateThumbnail, downloadImage } from './replicate';
 import { VideoProcessor } from './video';
 import { useProjectStore } from '@/lib/store';
+import { FileSystemService } from './filesystem';
 
 export class ProjectService {
   private videoProcessor: VideoProcessor;
+  private fileSystem: FileSystemService;
 
   constructor() {
     this.videoProcessor = new VideoProcessor(this.updateProgress);
+    this.fileSystem = new FileSystemService();
   }
 
   /**
@@ -27,24 +30,14 @@ export class ProjectService {
   /**
    * Creates a new project from a YouTube URL
    */
-  async createProject(youtubeUrl: string): Promise<Project> {
-    const { setProject, setProcessing, setProgress, setError } = useProjectStore.getState();
+  async createProject(youtubeUrl: string, videoFormat: 'landscape' | 'reel'): Promise<Project> {
+    const { createProject, setProcessing, setProgress, setError } = useProjectStore.getState();
     
     try {
       setProcessing(true);
       
       // Create initial project
-      const project: Project = {
-        id: uuidv4(),
-        youtubeUrl,
-        transcription: '', // Will be filled later
-        scenes: [],
-        status: 'draft',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      
-      setProject(project);
+      const project = createProject(youtubeUrl, videoFormat);
       return project;
     } catch (error: any) {
       setError({
@@ -119,12 +112,14 @@ export class ProjectService {
 
         // Generate audio
         const audio = await generateAudio(scene.narration);
-        updateScene(scene.id, { audio });
+        const audioPath = await this.fileSystem.saveFile(audio, `scene-${scene.id}-audio.mp3`, 'audio');
+        updateScene(scene.id, { audioPath });
 
         // Generate image
         const imageUrl = await generateImage(scene.imagePrompt);
         const image = await downloadImage(imageUrl);
-        updateScene(scene.id, { image: URL.createObjectURL(image) });
+        const imagePath = await this.fileSystem.saveFile(image, `scene-${scene.id}-image.png`, 'image');
+        updateScene(scene.id, { imagePath });
       }
 
       setProgress({
@@ -159,8 +154,27 @@ export class ProjectService {
         message: 'Starting video generation...'
       });
 
+      // Load all scene files
+      const processedScenes = await Promise.all(scenes.map(async (scene) => {
+        if (!scene.audioPath || !scene.imagePath) {
+          throw new Error(`Missing audio or image for scene ${scene.order}`);
+        }
+
+        const audio = await this.fileSystem.readFile(scene.audioPath, 'audio');
+        const image = await this.fileSystem.readFile(scene.imagePath, 'image');
+
+        return {
+          ...scene,
+          audio,
+          image: URL.createObjectURL(image)
+        };
+      }));
+
       // Pass the project to the video processor
-      const video = await this.videoProcessor.processVideo(scenes, project);
+      const video = await this.videoProcessor.processVideo(processedScenes, project);
+
+      // Save the final video
+      const videoPath = await this.fileSystem.saveFile(video, `${project.id}-final.mp4`, 'video');
 
       setProgress({
         stage: 'video-processing',
@@ -191,7 +205,9 @@ export class ProjectService {
         youtubeDetails.thumbnailPrompt,
         youtubeDetails.thumbnailTitle
       );
-      return thumbnailUrl;
+      const thumbnail = await downloadImage(thumbnailUrl);
+      const thumbnailPath = await this.fileSystem.saveFile(thumbnail, `thumbnail-${Date.now()}.png`, 'image');
+      return thumbnailPath;
     } catch (error: any) {
       const { setError } = useProjectStore.getState();
       setError({

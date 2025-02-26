@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useProjectActions, useProcessingState, useScenes, useCurrentProject } from '@/lib/store';
 import { ProjectService } from '@/lib/services/project';
 import { getOrCreateTranscription } from '@/lib/services/youtube';
@@ -8,7 +8,8 @@ import { Scene } from '@/types';
 import { ScenePreview } from '@/components/ScenePreview';
 import { ProjectList } from '@/components/ProjectList';
 import { generateAudio } from '@/lib/services/openai';
-import { generateImage } from '@/lib/services/replicate';
+import { generateImage, downloadImage } from '@/lib/services/replicate';
+import { FileSystemService } from '@/lib/services/filesystem';
 
 export function VideoProcessor() {
   const [url, setUrl] = useState('');
@@ -20,14 +21,56 @@ export function VideoProcessor() {
   const projectService = new ProjectService();
   const [isGeneratingAllAudio, setIsGeneratingAllAudio] = useState(false);
   const [isGeneratingAllImages, setIsGeneratingAllImages] = useState(false);
+  const [cacheSize, setCacheSize] = useState<{ total: number; audio: number; image: number; video: number } | null>(null);
+  const [isLoadingCacheSize, setIsLoadingCacheSize] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const fileSystem = new FileSystemService();
+
+  // Load cache size on component mount
+  useEffect(() => {
+    loadCacheSize();
+  }, []);
+
+  const loadCacheSize = async () => {
+    try {
+      setIsLoadingCacheSize(true);
+      const size = await fileSystem.getCacheSize();
+      setCacheSize(size);
+    } catch (error) {
+      console.error('Failed to get cache size:', error);
+    } finally {
+      setIsLoadingCacheSize(false);
+    }
+  };
+
+  const handleClearCache = async () => {
+    if (confirm('Are you sure you want to clear all cached files? This will remove all saved audio and images.')) {
+      try {
+        setIsClearing(true);
+        await fileSystem.clearCache();
+        await loadCacheSize();
+      } catch (error: any) {
+        setError({
+          stage: 'cache-clear',
+          message: error.message,
+          timestamp: new Date(),
+        });
+      } finally {
+        setIsClearing(false);
+      }
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url) return;
 
     try {
+      // Initialize file system with user interaction
+      await fileSystem.initialize(true);
+
       // Create new project with selected video format
-      const project = createProject(url, videoFormat);
+      const project = await projectService.createProject(url, videoFormat);
 
       // Get YouTube transcription
       const transcription = await getOrCreateTranscription(url);
@@ -60,26 +103,93 @@ export function VideoProcessor() {
   const handleGenerateAllAudio = async () => {
     setIsGeneratingAllAudio(true);
     try {
+      console.log('[VideoProcessor] Starting to generate all audio');
+      
+      // Initialize file system with user interaction
+      console.log('[VideoProcessor] Initializing file system');
+      const fsHandle = await fileSystem.initialize(true);
+      console.log('[VideoProcessor] File system initialized with handle:', fsHandle ? 'success' : 'failed');
+
       // Get all scenes that need audio generation
       const scenesToProcess = scenes.filter(scene => !scene.status?.audioGenerated);
+      console.log(`[VideoProcessor] Processing ${scenesToProcess.length} scenes for audio generation in parallel`);
       
-      // Process all scenes in parallel
-      await Promise.all(scenesToProcess.map(async (scene) => {
-        const audio = await generateAudio(scene.narration);
-        
-        // Convert Blob to data URL for storage
-        const audioUrl = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(audio);
-        });
-
-        updateScene(scene.id, {
-          audio: audioUrl,
-          status: { ...scene.status, audioGenerated: true }
-        });
-      }));
+      // Process scenes in parallel
+      const results = await Promise.allSettled(
+        scenesToProcess.map(async (scene) => {
+          try {
+            console.log(`[VideoProcessor] Generating audio for scene ${scene.id}`);
+            
+            // Generate audio
+            const audio = await generateAudio(scene.narration);
+            console.log(`[VideoProcessor] Audio generated for scene ${scene.id}, type:`, typeof audio);
+            
+            // Ensure audio is a proper Blob with audio MIME type
+            const audioBlob = audio instanceof Blob 
+              ? audio 
+              : new Blob([audio], { type: 'audio/mpeg' });
+            
+            console.log(`[VideoProcessor] Audio blob prepared for scene ${scene.id}:`, {
+              type: audioBlob.type,
+              size: audioBlob.size
+            });
+            
+            // Save the file
+            const filename = `scene-${scene.id}-audio.mp3`;
+            console.log(`[VideoProcessor] Saving audio file: ${filename}`);
+            const audioPath = await fileSystem.saveFile(audioBlob, filename, 'audio');
+            console.log(`[VideoProcessor] Audio saved at path: ${audioPath}`);
+            
+            // Return the updated scene data
+            return {
+              sceneId: scene.id,
+              audioPath,
+              success: true
+            };
+          } catch (error: any) {
+            console.error(`[VideoProcessor] Error processing scene ${scene.id}:`, error);
+            return {
+              sceneId: scene.id,
+              error: error.message || 'Unknown error',
+              success: false
+            };
+          }
+        })
+      );
+      
+      // Update scenes with results
+      results.forEach(result => {
+        if (result.status === 'fulfilled') {
+          const data = result.value;
+          if (data.success) {
+            const scene = scenes.find(s => s.id === data.sceneId);
+            if (scene) {
+              updateScene(data.sceneId, {
+                audioPath: data.audioPath,
+                status: { ...scene.status, audioGenerated: true }
+              });
+              console.log(`[VideoProcessor] Scene ${data.sceneId} updated with audio path: ${data.audioPath}`);
+            }
+          } else {
+            setError({
+              stage: 'audio-generation',
+              message: `Error generating audio for scene ${data.sceneId}: ${data.error}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (result.status === 'rejected') {
+          console.error('[VideoProcessor] Promise rejected:', result.reason);
+          setError({
+            stage: 'audio-generation',
+            message: `Unexpected error during audio generation: ${result.reason}`,
+            timestamp: new Date(),
+          });
+        }
+      });
+      
+      console.log('[VideoProcessor] All audio generation complete');
     } catch (error: any) {
+      console.error('[VideoProcessor] Audio generation error:', error);
       setError({
         stage: 'audio-generation',
         message: error.message,
@@ -93,20 +203,92 @@ export function VideoProcessor() {
   const handleGenerateAllImages = async () => {
     setIsGeneratingAllImages(true);
     try {
+      console.log('[VideoProcessor] Starting to generate all images');
+      
+      // Initialize file system with user interaction
+      console.log('[VideoProcessor] Initializing file system');
+      const fsHandle = await fileSystem.initialize(true);
+      console.log('[VideoProcessor] File system initialized with handle:', fsHandle ? 'success' : 'failed');
+
       // Get all scenes that need image generation
       const scenesToProcess = scenes.filter(scene => !scene.status?.imageGenerated);
+      console.log(`[VideoProcessor] Processing ${scenesToProcess.length} scenes for image generation in parallel`);
       
-      // Process all scenes in parallel
-      await Promise.all(scenesToProcess.map(async (scene) => {
-        const imageUrl = await generateImage(scene.imagePrompt, {
-          isReel: currentProject?.videoFormat === 'reel'
-        });
-        updateScene(scene.id, {
-          image: imageUrl,
-          status: { ...scene.status, imageGenerated: true }
-        });
-      }));
+      // Process scenes in parallel
+      const results = await Promise.allSettled(
+        scenesToProcess.map(async (scene) => {
+          try {
+            console.log(`[VideoProcessor] Generating image for scene ${scene.id}`);
+            
+            // Generate image
+            const imageUrl = await generateImage(scene.imagePrompt, {
+              isReel: currentProject?.videoFormat === 'reel'
+            });
+            console.log(`[VideoProcessor] Image URL generated for scene ${scene.id}: ${imageUrl}`);
+            
+            // Download image
+            const image = await downloadImage(imageUrl);
+            console.log(`[VideoProcessor] Image downloaded for scene ${scene.id}:`, {
+              type: image.type,
+              size: image.size
+            });
+            
+            // Save the file
+            const filename = `scene-${scene.id}-image.png`;
+            console.log(`[VideoProcessor] Saving image file: ${filename}`);
+            const imagePath = await fileSystem.saveFile(image, filename, 'image');
+            console.log(`[VideoProcessor] Image saved at path: ${imagePath}`);
+            
+            // Return the updated scene data
+            return {
+              sceneId: scene.id,
+              imagePath,
+              success: true
+            };
+          } catch (error: any) {
+            console.error(`[VideoProcessor] Error processing scene ${scene.id}:`, error);
+            return {
+              sceneId: scene.id,
+              error: error.message || 'Unknown error',
+              success: false
+            };
+          }
+        })
+      );
+      
+      // Update scenes with results
+      results.forEach(result => {
+        if (result.status === 'fulfilled') {
+          const data = result.value;
+          if (data.success) {
+            const scene = scenes.find(s => s.id === data.sceneId);
+            if (scene) {
+              updateScene(data.sceneId, {
+                imagePath: data.imagePath,
+                status: { ...scene.status, imageGenerated: true }
+              });
+              console.log(`[VideoProcessor] Scene ${data.sceneId} updated with image path: ${data.imagePath}`);
+            }
+          } else {
+            setError({
+              stage: 'image-generation',
+              message: `Error generating image for scene ${data.sceneId}: ${data.error}`,
+              timestamp: new Date(),
+            });
+          }
+        } else if (result.status === 'rejected') {
+          console.error('[VideoProcessor] Promise rejected:', result.reason);
+          setError({
+            stage: 'image-generation',
+            message: `Unexpected error during image generation: ${result.reason}`,
+            timestamp: new Date(),
+          });
+        }
+      });
+      
+      console.log('[VideoProcessor] All image generation complete');
     } catch (error: any) {
+      console.error('[VideoProcessor] Image generation error:', error);
       setError({
         stage: 'image-generation',
         message: error.message,
@@ -132,22 +314,8 @@ export function VideoProcessor() {
         throw new Error('Please generate all audio and images before creating the video');
       }
 
-      // Process scenes sequentially
-      const processedScenes = [];
-      for (const scene of scenes) {
-        // Convert data URL to Blob
-        const audioDataUrl = scene.audio as string;
-        const response = await fetch(audioDataUrl);
-        const audioBlob = await response.blob();
-
-        processedScenes.push({
-          ...scene,
-          audio: audioBlob
-        });
-      }
-
-      // Pass the currentProject to generateVideo
-      const video = await projectService.generateVideo(processedScenes, currentProject);
+      // Generate the video
+      const video = await projectService.generateVideo(scenes, currentProject);
       
       // Create download link
       const videoUrl = URL.createObjectURL(video);
@@ -187,6 +355,32 @@ export function VideoProcessor() {
         <p className="text-gray-500 text-center">
           Enter a YouTube URL to create an AI-powered video with narration and visuals
         </p>
+      </div>
+
+      {/* Cache info and clear button */}
+      <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+        <div>
+          {isLoadingCacheSize ? (
+            <p className="text-sm text-gray-500">Loading cache info...</p>
+          ) : cacheSize ? (
+            <div className="text-sm">
+              <p className="font-medium">Cache usage:</p>
+              <p>Total: {(cacheSize.total / (1024 * 1024)).toFixed(2)} MB</p>
+              <p>Audio: {(cacheSize.audio / (1024 * 1024)).toFixed(2)} MB</p>
+              <p>Images: {(cacheSize.image / (1024 * 1024)).toFixed(2)} MB</p>
+              <p>Videos: {(cacheSize.video / (1024 * 1024)).toFixed(2)} MB</p>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">Cache info not available</p>
+          )}
+        </div>
+        <button
+          onClick={handleClearCache}
+          disabled={isClearing || !cacheSize || cacheSize.total === 0}
+          className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isClearing ? 'Clearing...' : 'Clear Cache'}
+        </button>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -259,13 +453,16 @@ export function VideoProcessor() {
             </div>
           </div>
           <div className="grid gap-6">
-            {scenes.map((scene) => (
-              <ScenePreview 
-                key={scene.id} 
-                scene={scene} 
-                onDelete={handleDeleteScene}
-              />
-            ))}
+            {scenes.map((scene) => {
+              console.log('[VideoProcessor] Rendering scene:', scene);
+              return (
+                <ScenePreview 
+                  key={scene.id} 
+                  scene={scene} 
+                  onDelete={handleDeleteScene}
+                />
+              );
+            })}
           </div>
         </div>
       )}
