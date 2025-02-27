@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Scene } from '@/types';
 import { generateAudio } from '@/lib/services/openai';
 import { generateImage, downloadImage } from '@/lib/services/replicate';
@@ -20,6 +20,8 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isGeneratingSubtitles, setIsGeneratingSubtitles] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [isUploadingAudio, setIsUploadingAudio] = useState(false);
   
   // Edit mode states
   const [isEditingNarration, setIsEditingNarration] = useState(false);
@@ -31,6 +33,10 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
   const fileSystem = new FileSystemService();
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  
+  // Refs for file inputs
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
 
   // Update edited content when scene changes
   useEffect(() => {
@@ -259,6 +265,94 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
     setIsPlaying(true);
   };
 
+  const handleUploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    try {
+      setIsUploadingImage(true);
+      
+      // Initialize file system with user interaction
+      await fileSystem.initialize(true);
+      
+      // Check if file is an image
+      if (!file.type.startsWith('image/')) {
+        throw new Error('Please upload an image file');
+      }
+      
+      // Save image to file system
+      const filename = `scene-${scene.id}-image-custom.${file.name.split('.').pop()}`;
+      const imagePath = await fileSystem.saveFile(file, filename, 'image');
+      
+      // Update scene with image path
+      updateScene(scene.id, { 
+        imagePath,
+        status: { 
+          ...scene.status, 
+          imageGenerated: true 
+        }
+      });
+    } catch (error: any) {
+      console.error('Error uploading image:', error);
+      setError({
+        stage: 'image-upload',
+        message: error.message,
+        timestamp: new Date(),
+      });
+    } finally {
+      setIsUploadingImage(false);
+      // Reset file input
+      if (imageInputRef.current) {
+        imageInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleUploadAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    try {
+      setIsUploadingAudio(true);
+      
+      // Initialize file system with user interaction
+      await fileSystem.initialize(true);
+      
+      // Check if file is an audio
+      if (!file.type.startsWith('audio/')) {
+        throw new Error('Please upload an audio file');
+      }
+      
+      // Save audio to file system
+      const filename = `scene-${scene.id}-audio-custom.${file.name.split('.').pop()}`;
+      const audioPath = await fileSystem.saveFile(file, filename, 'audio');
+      
+      // Update scene with audio path
+      updateScene(scene.id, { 
+        audioPath,
+        status: { 
+          ...scene.status, 
+          audioGenerated: true 
+        },
+        // Clear subtitles if they exist since we have new audio
+        subtitles: undefined
+      });
+    } catch (error: any) {
+      console.error('Error uploading audio:', error);
+      setError({
+        stage: 'audio-upload',
+        message: error.message,
+        timestamp: new Date(),
+      });
+    } finally {
+      setIsUploadingAudio(false);
+      // Reset file input
+      if (audioInputRef.current) {
+        audioInputRef.current.value = '';
+      }
+    }
+  };
+
   // Button component for regenerate/edit actions
   const ActionButton = ({ 
     onClick, 
@@ -398,18 +492,51 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
                   </div>
                 )}
               </div>
+              <div className="mt-2 flex justify-end space-x-2">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleUploadImage}
+                  className="hidden"
+                  ref={imageInputRef}
+                />
+                <button
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={isUploadingImage}
+                  className="px-2 py-1 text-xs bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50"
+                >
+                  {isUploadingImage ? 'Uploading...' : 'Upload Custom'}
+                </button>
+              </div>
             </div>
           ) : (
             <div>
               <h4 className="font-medium mb-2">Image</h4>
-              <div className="flex justify-center items-center h-40 bg-gray-100 rounded-md">
-                <button
-                  onClick={handleGenerateImage}
-                  disabled={isGeneratingImage}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isGeneratingImage ? 'Generating...' : 'Generate Image'}
-                </button>
+              <div className="flex flex-col justify-center items-center h-40 bg-gray-100 rounded-md p-4">
+                <div className="flex space-x-2 mb-2">
+                  <button
+                    onClick={handleGenerateImage}
+                    disabled={isGeneratingImage}
+                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGeneratingImage ? 'Generating...' : 'Generate Image'}
+                  </button>
+                  <span className="text-gray-500 mx-2">or</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleUploadImage}
+                    className="hidden"
+                    ref={imageInputRef}
+                  />
+                  <button
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={isUploadingImage}
+                    className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50"
+                  >
+                    {isUploadingImage ? 'Uploading...' : 'Upload Image'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -429,16 +556,49 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
                     <p className="text-gray-500">Loading audio...</p>
                   </div>
                 )}
+                <div className="flex justify-end space-x-2">
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    onChange={handleUploadAudio}
+                    className="hidden"
+                    ref={audioInputRef}
+                  />
+                  <button
+                    onClick={() => audioInputRef.current?.click()}
+                    disabled={isUploadingAudio}
+                    className="px-2 py-1 text-xs bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50"
+                  >
+                    {isUploadingAudio ? 'Uploading...' : 'Upload Custom'}
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="flex justify-center items-center h-12 bg-gray-100 rounded-md">
-                <button
-                  onClick={handleGenerateAudio}
-                  disabled={isGeneratingAudio}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isGeneratingAudio ? 'Generating...' : 'Generate Audio'}
-                </button>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={handleGenerateAudio}
+                    disabled={isGeneratingAudio}
+                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGeneratingAudio ? 'Generating...' : 'Generate Audio'}
+                  </button>
+                  <span className="text-gray-500 mx-2">or</span>
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    onChange={handleUploadAudio}
+                    className="hidden"
+                    ref={audioInputRef}
+                  />
+                  <button
+                    onClick={() => audioInputRef.current?.click()}
+                    disabled={isUploadingAudio}
+                    className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50"
+                  >
+                    {isUploadingAudio ? 'Uploading...' : 'Upload Audio'}
+                  </button>
+                </div>
               </div>
             )}
           </div>
