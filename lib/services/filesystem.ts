@@ -13,6 +13,9 @@ class ProcessingError extends Error {
   }
 }
 
+// Helper to check if code is running in browser environment
+const isBrowser = () => typeof window !== 'undefined' && typeof window.indexedDB !== 'undefined';
+
 export class FileSystemService {
   private dbName = 'MediaCacheDB';
   private dbVersion = 1;
@@ -21,18 +24,28 @@ export class FileSystemService {
     image: 'imageFiles',
     video: 'videoFiles'
   };
+  private isInitialized = false;
 
   constructor() {
-    // Initialize the database when the service is created
-    this.initializeDB().catch(error => {
-      console.error('[CacheStorage] Failed to initialize database:', error);
-    });
+    // Initialize the database when the service is created, but only in browser environment
+    if (isBrowser()) {
+      this.initializeDB().catch(error => {
+        console.error('[CacheStorage] Failed to initialize database:', error);
+      });
+    } else {
+      console.log('[CacheStorage] Not initializing IndexedDB (not in browser environment)');
+    }
   }
 
   /**
    * Initialize the IndexedDB database
    */
-  private async initializeDB(): Promise<IDBDatabase> {
+  private async initializeDB(): Promise<IDBDatabase | null> {
+    if (!isBrowser()) {
+      console.log('[CacheStorage] IndexedDB not available (not in browser environment)');
+      return null;
+    }
+
     return new Promise((resolve, reject) => {
       console.log('[CacheStorage] Initializing database');
       const request = indexedDB.open(this.dbName, this.dbVersion);
@@ -61,6 +74,7 @@ export class FileSystemService {
       request.onsuccess = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
         console.log('[CacheStorage] Database initialized successfully');
+        this.isInitialized = true;
         resolve(db);
       };
 
@@ -74,7 +88,12 @@ export class FileSystemService {
   /**
    * Get a database connection
    */
-  private async getDB(): Promise<IDBDatabase> {
+  private async getDB(): Promise<IDBDatabase | null> {
+    if (!isBrowser()) {
+      console.log('[CacheStorage] IndexedDB not available (not in browser environment)');
+      return null;
+    }
+
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(this.dbName, this.dbVersion);
 
@@ -92,6 +111,11 @@ export class FileSystemService {
    * Initialize the storage (compatibility method with old API)
    */
   async initialize(userInitiated = false): Promise<boolean> {
+    if (!isBrowser()) {
+      console.log('[CacheStorage] IndexedDB not available (not in browser environment)');
+      return false;
+    }
+
     try {
       await this.initializeDB();
       return true;
@@ -105,6 +129,11 @@ export class FileSystemService {
    * Save a file to the cache
    */
   async saveFile(data: Blob | Buffer, filename: string, type: 'image' | 'audio' | 'video'): Promise<string> {
+    if (!isBrowser()) {
+      console.log('[CacheStorage] IndexedDB not available (not in browser environment)');
+      return `mock-${Date.now()}-${filename}`;
+    }
+
     try {
       console.log(`[CacheStorage] Saving ${type} file: ${filename}`);
       
@@ -121,6 +150,7 @@ export class FileSystemService {
       
       // Save to IndexedDB
       const db = await this.getDB();
+      if (!db) return fileId;
       
       return new Promise((resolve, reject) => {
         const transaction = db.transaction([storeName], 'readwrite');
@@ -156,11 +186,25 @@ export class FileSystemService {
    * Read a file from the cache
    */
   async readFile(fileId: string, type: 'image' | 'audio' | 'video'): Promise<Blob> {
+    if (!isBrowser()) {
+      console.log('[CacheStorage] IndexedDB not available (not in browser environment)');
+      // Return an empty blob when not in browser
+      return new Blob([], { type: 'application/octet-stream' });
+    }
+
     try {
       console.log(`[CacheStorage] Reading ${type} file: ${fileId}`);
       
       const storeName = this.stores[type];
       const db = await this.getDB();
+      
+      if (!db) {
+        throw new ProcessingError({
+          stage: 'file-read',
+          message: 'IndexedDB not available',
+          timestamp: new Date(),
+        });
+      }
       
       return new Promise((resolve, reject) => {
         const transaction = db.transaction([storeName], 'readonly');
@@ -212,11 +256,24 @@ export class FileSystemService {
    * Delete a file from the cache
    */
   async deleteFile(fileId: string, type: 'image' | 'audio' | 'video'): Promise<void> {
+    if (!isBrowser()) {
+      console.log('[CacheStorage] IndexedDB not available (not in browser environment)');
+      return;
+    }
+
     try {
       console.log(`[CacheStorage] Deleting ${type} file: ${fileId}`);
       
       const storeName = this.stores[type];
       const db = await this.getDB();
+      
+      if (!db) {
+        throw new ProcessingError({
+          stage: 'file-delete',
+          message: 'IndexedDB not available',
+          timestamp: new Date(),
+        });
+      }
       
       return new Promise((resolve, reject) => {
         const transaction = db.transaction([storeName], 'readwrite');
@@ -252,13 +309,28 @@ export class FileSystemService {
    * Clear all cached files
    */
   async clearCache(): Promise<void> {
+    if (!isBrowser()) {
+      console.log('[CacheStorage] IndexedDB not available (not in browser environment)');
+      return;
+    }
+
     try {
       console.log('[CacheStorage] Clearing all cached files');
       
       const db = await this.getDB();
-      const storeNames = Object.values(this.stores);
       
-      for (const storeName of storeNames) {
+      if (!db) {
+        throw new ProcessingError({
+          stage: 'cache-clear',
+          message: 'IndexedDB not available',
+          timestamp: new Date(),
+        });
+      }
+      
+      // Clear each store
+      for (const storeType of Object.keys(this.stores) as Array<keyof typeof this.stores>) {
+        const storeName = this.stores[storeType];
+        
         await new Promise<void>((resolve, reject) => {
           const transaction = db.transaction([storeName], 'readwrite');
           const store = transaction.objectStore(storeName);
@@ -266,65 +338,102 @@ export class FileSystemService {
           const request = store.clear();
           
           request.onsuccess = () => {
-            console.log(`[CacheStorage] Successfully cleared ${storeName}`);
+            console.log(`[CacheStorage] Successfully cleared ${storeName} store`);
             resolve();
           };
           
           request.onerror = (event) => {
-            console.error(`[CacheStorage] Error clearing ${storeName}:`, (event.target as IDBRequest).error);
-            reject((event.target as IDBRequest).error);
+            console.error(`[CacheStorage] Error clearing ${storeName} store:`, (event.target as IDBRequest).error);
+            reject(new ProcessingError({
+              stage: 'cache-clear',
+              message: `Failed to clear ${storeName} store: ${(event.target as IDBRequest).error?.message || 'Unknown error'}`,
+              timestamp: new Date(),
+            }));
           };
         });
       }
       
-      console.log('[CacheStorage] All caches cleared successfully');
-    } catch (error) {
-      console.error('[CacheStorage] Error clearing cache:', error);
+      console.log('[CacheStorage] Successfully cleared all cached files');
+    } catch (error: any) {
+      console.error('[CacheStorage] Cache clear error:', error);
       throw new ProcessingError({
         stage: 'cache-clear',
-        message: `Failed to clear cache: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        message: `Failed to clear cache: ${error.message}`,
         timestamp: new Date(),
       });
     }
   }
 
   /**
-   * Get the estimated size of the cache
+   * Get the size of all cached files
    */
   async getCacheSize(): Promise<{ total: number; audio: number; image: number; video: number }> {
+    if (!isBrowser()) {
+      console.log('[CacheStorage] IndexedDB not available (not in browser environment)');
+      return { total: 0, audio: 0, image: 0, video: 0 };
+    }
+
     try {
-      const db = await this.getDB();
-      const sizes = {
-        audio: 0,
-        image: 0,
-        video: 0,
-        total: 0
-      };
+      console.log('[CacheStorage] Getting cache size');
       
-      for (const [type, storeName] of Object.entries(this.stores)) {
+      const db = await this.getDB();
+      
+      if (!db) {
+        throw new ProcessingError({
+          stage: 'cache-size',
+          message: 'IndexedDB not available',
+          timestamp: new Date(),
+        });
+      }
+      
+      const result = { total: 0, audio: 0, image: 0, video: 0 };
+      
+      // Get size for each store
+      for (const storeType of Object.keys(this.stores) as Array<keyof typeof this.stores>) {
+        const storeName = this.stores[storeType];
+        
         const size = await new Promise<number>((resolve, reject) => {
           const transaction = db.transaction([storeName], 'readonly');
           const store = transaction.objectStore(storeName);
+          const request = store.openCursor();
           
-          const request = store.getAll();
+          let storeSize = 0;
           
           request.onsuccess = (event) => {
-            const blobs = (event.target as IDBRequest).result as Blob[];
-            const storeSize = blobs.reduce((total, blob) => total + blob.size, 0);
-            resolve(storeSize);
+            const cursor = (event.target as IDBRequest).result as IDBCursorWithValue;
+            
+            if (cursor) {
+              const blob = cursor.value as Blob;
+              storeSize += blob.size;
+              cursor.continue();
+            } else {
+              resolve(storeSize);
+            }
           };
           
-          request.onerror = () => resolve(0);
+          request.onerror = (event) => {
+            console.error(`[CacheStorage] Error getting size for ${storeName}:`, (event.target as IDBRequest).error);
+            reject(new ProcessingError({
+              stage: 'cache-size',
+              message: `Failed to get size for ${storeName}: ${(event.target as IDBRequest).error?.message || 'Unknown error'}`,
+              timestamp: new Date(),
+            }));
+          };
         });
         
-        sizes[type as 'audio' | 'image' | 'video'] = size;
-        sizes.total += size;
+        result[storeType] = size;
+        result.total += size;
       }
       
-      return sizes;
-    } catch (error) {
+      console.log('[CacheStorage] Cache size:', result);
+      return result;
+    } catch (error: any) {
       console.error('[CacheStorage] Error getting cache size:', error);
-      return { total: 0, audio: 0, image: 0, video: 0 };
+      throw new ProcessingError({
+        stage: 'cache-size',
+        message: `Failed to get cache size: ${error.message}`,
+        timestamp: new Date(),
+      });
     }
   }
 } 

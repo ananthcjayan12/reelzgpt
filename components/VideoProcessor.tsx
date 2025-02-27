@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useProjectActions, useProcessingState, useScenes, useCurrentProject } from '@/lib/store';
 import { ProjectService } from '@/lib/services/project';
 import { getOrCreateTranscription } from '@/lib/services/youtube';
@@ -24,17 +24,35 @@ export function VideoProcessor() {
   const [cacheSize, setCacheSize] = useState<{ total: number; audio: number; image: number; video: number } | null>(null);
   const [isLoadingCacheSize, setIsLoadingCacheSize] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
-  const fileSystem = new FileSystemService();
+  const fileSystemRef = useRef<FileSystemService | null>(null);
 
-  // Load cache size on component mount
+  // Initialize FileSystemService only on the client side
   useEffect(() => {
+    fileSystemRef.current = new FileSystemService();
+    // Load cache size after FileSystemService is initialized
     loadCacheSize();
   }, []);
 
+  // Debug log for video button state
+  useEffect(() => {
+    if (scenes.length > 0) {
+      console.log('Scenes for video button:', scenes.map(s => ({
+        id: s.id,
+        hasAudio: !!s.audioPath,
+        hasImage: !!s.imagePath,
+        audioGenerated: !!s.status?.audioGenerated,
+        imageGenerated: !!s.status?.imageGenerated,
+        buttonEnabled: (s.status?.audioGenerated || s.audioPath) && (s.status?.imageGenerated || s.imagePath)
+      })));
+    }
+  }, [scenes]);
+
   const loadCacheSize = async () => {
+    if (!fileSystemRef.current) return;
+    
     try {
       setIsLoadingCacheSize(true);
-      const size = await fileSystem.getCacheSize();
+      const size = await fileSystemRef.current.getCacheSize();
       setCacheSize(size);
     } catch (error) {
       console.error('Failed to get cache size:', error);
@@ -44,10 +62,12 @@ export function VideoProcessor() {
   };
 
   const handleClearCache = async () => {
+    if (!fileSystemRef.current) return;
+    
     if (confirm('Are you sure you want to clear all cached files? This will remove all saved audio and images.')) {
       try {
         setIsClearing(true);
-        await fileSystem.clearCache();
+        await fileSystemRef.current.clearCache();
         await loadCacheSize();
       } catch (error: any) {
         setError({
@@ -67,7 +87,7 @@ export function VideoProcessor() {
 
     try {
       // Initialize file system with user interaction
-      await fileSystem.initialize(true);
+      await fileSystemRef.current?.initialize(true);
 
       // Create new project with selected video format
       const project = await projectService.createProject(url, videoFormat);
@@ -101,99 +121,77 @@ export function VideoProcessor() {
   };
 
   const handleGenerateAllAudio = async () => {
-    setIsGeneratingAllAudio(true);
+    if (!currentProject) {
+      alert('Please create a project first');
+      return;
+    }
+
+    if (!scenes || scenes.length === 0) {
+      alert('No scenes to generate audio for');
+      return;
+    }
+
     try {
-      console.log('[VideoProcessor] Starting to generate all audio');
+      setIsGeneratingAllAudio(true);
       
       // Initialize file system with user interaction
-      console.log('[VideoProcessor] Initializing file system');
-      const fsHandle = await fileSystem.initialize(true);
-      console.log('[VideoProcessor] File system initialized with handle:', fsHandle ? 'success' : 'failed');
+      if (fileSystemRef.current) {
+        await fileSystemRef.current.initialize(true);
+      }
 
-      // Get all scenes that need audio generation
-      const scenesToProcess = scenes.filter(scene => !scene.status?.audioGenerated);
-      console.log(`[VideoProcessor] Processing ${scenesToProcess.length} scenes for audio generation in parallel`);
-      
-      // Process scenes in parallel
-      const results = await Promise.allSettled(
-        scenesToProcess.map(async (scene) => {
-          try {
-            console.log(`[VideoProcessor] Generating audio for scene ${scene.id}`);
-            
-            // Generate audio
-            const audio = await generateAudio(scene.narration);
-            console.log(`[VideoProcessor] Audio generated for scene ${scene.id}, type:`, typeof audio);
-            
-            // Ensure audio is a proper Blob with audio MIME type
-            const audioBlob = audio instanceof Blob 
-              ? audio 
-              : new Blob([audio], { type: 'audio/mpeg' });
-            
-            console.log(`[VideoProcessor] Audio blob prepared for scene ${scene.id}:`, {
-              type: audioBlob.type,
-              size: audioBlob.size
-            });
-            
-            // Save the file
-            const filename = `scene-${scene.id}-audio.mp3`;
-            console.log(`[VideoProcessor] Saving audio file: ${filename}`);
-            const audioPath = await fileSystem.saveFile(audioBlob, filename, 'audio');
-            console.log(`[VideoProcessor] Audio saved at path: ${audioPath}`);
-            
-            // Return the updated scene data
-            return {
-              sceneId: scene.id,
-              audioPath,
-              success: true
-            };
-          } catch (error: any) {
-            console.error(`[VideoProcessor] Error processing scene ${scene.id}:`, error);
-            return {
-              sceneId: scene.id,
-              error: error.message || 'Unknown error',
-              success: false
-            };
+      // Create new project with selected video format
+      for (const scene of scenes) {
+        if (!scene.narration) continue;
+        
+        try {
+          console.log(`[VideoProcessor] Generating audio for scene ${scene.id}`);
+          
+          // Skip if already has audio
+          if (scene.audioPath) {
+            console.log(`[VideoProcessor] Scene ${scene.id} already has audio, skipping`);
+            continue;
           }
-        })
-      );
-      
-      // Update scenes with results
-      results.forEach(result => {
-        if (result.status === 'fulfilled') {
-          const data = result.value;
-          if (data.success) {
-            const scene = scenes.find(s => s.id === data.sceneId);
-            if (scene) {
-              updateScene(data.sceneId, {
-                audioPath: data.audioPath,
-                status: { ...scene.status, audioGenerated: true }
+          
+          // Generate audio from narration
+          const audioBlob = await generateAudio(scene.narration);
+          
+          if (audioBlob) {
+            // Save audio to file system
+            if (fileSystemRef.current) {
+              const filename = `scene-${scene.id}-audio.mp3`;
+              console.log(`[VideoProcessor] Saving audio file: ${filename}`);
+              const audioPath = await fileSystemRef.current.saveFile(audioBlob, filename, 'audio');
+              console.log(`[VideoProcessor] Audio saved at path: ${audioPath}`);
+              
+              // Update scene with audio path
+              updateScene(scene.id, { 
+                audioPath,
+                status: { 
+                  ...scene.status, 
+                  audioGenerated: true 
+                }
               });
-              console.log(`[VideoProcessor] Scene ${data.sceneId} updated with audio path: ${data.audioPath}`);
+            } else {
+              console.warn('[VideoProcessor] File system not available, cannot save audio');
             }
-          } else {
-            setError({
-              stage: 'audio-generation',
-              message: `Error generating audio for scene ${data.sceneId}: ${data.error}`,
-              timestamp: new Date(),
-            });
           }
-        } else if (result.status === 'rejected') {
-          console.error('[VideoProcessor] Promise rejected:', result.reason);
+        } catch (error: any) {
+          console.error(`[VideoProcessor] Error generating audio for scene ${scene.id}:`, error);
           setError({
+            message: `Failed to generate audio for scene ${scene.id}: ${error.message}`,
             stage: 'audio-generation',
-            message: `Unexpected error during audio generation: ${result.reason}`,
-            timestamp: new Date(),
+            timestamp: new Date()
           });
         }
-      });
+      }
       
       console.log('[VideoProcessor] All audio generation complete');
     } catch (error: any) {
-      console.error('[VideoProcessor] Audio generation error:', error);
+      console.error('[VideoProcessor] Error generating all audio:', error);
       setError({
+        message: `Failed to generate all audio: ${error.message}`,
         stage: 'audio-generation',
-        message: error.message,
-        timestamp: new Date(),
+        timestamp: new Date()
       });
     } finally {
       setIsGeneratingAllAudio(false);
@@ -201,98 +199,80 @@ export function VideoProcessor() {
   };
 
   const handleGenerateAllImages = async () => {
-    setIsGeneratingAllImages(true);
+    if (!currentProject) {
+      alert('Please create a project first');
+      return;
+    }
+
+    if (!scenes || scenes.length === 0) {
+      alert('No scenes to generate images for');
+      return;
+    }
+
     try {
-      console.log('[VideoProcessor] Starting to generate all images');
+      setIsGeneratingAllImages(true);
       
       // Initialize file system with user interaction
-      console.log('[VideoProcessor] Initializing file system');
-      const fsHandle = await fileSystem.initialize(true);
-      console.log('[VideoProcessor] File system initialized with handle:', fsHandle ? 'success' : 'failed');
+      if (fileSystemRef.current) {
+        await fileSystemRef.current.initialize(true);
+      }
 
-      // Get all scenes that need image generation
-      const scenesToProcess = scenes.filter(scene => !scene.status?.imageGenerated);
-      console.log(`[VideoProcessor] Processing ${scenesToProcess.length} scenes for image generation in parallel`);
-      
-      // Process scenes in parallel
-      const results = await Promise.allSettled(
-        scenesToProcess.map(async (scene) => {
-          try {
-            console.log(`[VideoProcessor] Generating image for scene ${scene.id}`);
-            
-            // Generate image
-            const imageUrl = await generateImage(scene.imagePrompt, {
-              isReel: currentProject?.videoFormat === 'reel'
-            });
-            console.log(`[VideoProcessor] Image URL generated for scene ${scene.id}: ${imageUrl}`);
-            
-            // Download image
+      for (const scene of scenes) {
+        if (!scene.imagePrompt) continue;
+        
+        try {
+          console.log(`[VideoProcessor] Generating image for scene ${scene.id}`);
+          
+          // Skip if already has image
+          if (scene.imagePath) {
+            console.log(`[VideoProcessor] Scene ${scene.id} already has image, skipping`);
+            continue;
+          }
+          
+          // Generate image from image prompt
+          const imageUrl = await generateImage(scene.imagePrompt, {
+            isReel: currentProject?.videoFormat === 'reel'
+          });
+          
+          if (imageUrl) {
+            // Download and save image
             const image = await downloadImage(imageUrl);
-            console.log(`[VideoProcessor] Image downloaded for scene ${scene.id}:`, {
-              type: image.type,
-              size: image.size
-            });
             
-            // Save the file
-            const filename = `scene-${scene.id}-image.png`;
-            console.log(`[VideoProcessor] Saving image file: ${filename}`);
-            const imagePath = await fileSystem.saveFile(image, filename, 'image');
-            console.log(`[VideoProcessor] Image saved at path: ${imagePath}`);
-            
-            // Return the updated scene data
-            return {
-              sceneId: scene.id,
-              imagePath,
-              success: true
-            };
-          } catch (error: any) {
-            console.error(`[VideoProcessor] Error processing scene ${scene.id}:`, error);
-            return {
-              sceneId: scene.id,
-              error: error.message || 'Unknown error',
-              success: false
-            };
-          }
-        })
-      );
-      
-      // Update scenes with results
-      results.forEach(result => {
-        if (result.status === 'fulfilled') {
-          const data = result.value;
-          if (data.success) {
-            const scene = scenes.find(s => s.id === data.sceneId);
-            if (scene) {
-              updateScene(data.sceneId, {
-                imagePath: data.imagePath,
-                status: { ...scene.status, imageGenerated: true }
+            if (image && fileSystemRef.current) {
+              const filename = `scene-${scene.id}-image.png`;
+              console.log(`[VideoProcessor] Saving image file: ${filename}`);
+              const imagePath = await fileSystemRef.current.saveFile(image, filename, 'image');
+              console.log(`[VideoProcessor] Image saved at path: ${imagePath}`);
+              
+              // Update scene with image path
+              updateScene(scene.id, { 
+                imagePath,
+                status: { 
+                  ...scene.status, 
+                  imageGenerated: true 
+                }
               });
-              console.log(`[VideoProcessor] Scene ${data.sceneId} updated with image path: ${data.imagePath}`);
+            } else {
+              console.warn('[VideoProcessor] File system not available or image download failed, cannot save image');
             }
-          } else {
-            setError({
-              stage: 'image-generation',
-              message: `Error generating image for scene ${data.sceneId}: ${data.error}`,
-              timestamp: new Date(),
-            });
           }
-        } else if (result.status === 'rejected') {
-          console.error('[VideoProcessor] Promise rejected:', result.reason);
+        } catch (error: any) {
+          console.error(`[VideoProcessor] Error generating image for scene ${scene.id}:`, error);
           setError({
+            message: `Failed to generate image for scene ${scene.id}: ${error.message}`,
             stage: 'image-generation',
-            message: `Unexpected error during image generation: ${result.reason}`,
-            timestamp: new Date(),
+            timestamp: new Date()
           });
         }
-      });
+      }
       
       console.log('[VideoProcessor] All image generation complete');
     } catch (error: any) {
-      console.error('[VideoProcessor] Image generation error:', error);
+      console.error('[VideoProcessor] Error generating all images:', error);
       setError({
+        message: `Failed to generate all images: ${error.message}`,
         stage: 'image-generation',
-        message: error.message,
-        timestamp: new Date(),
+        timestamp: new Date()
       });
     } finally {
       setIsGeneratingAllImages(false);
@@ -307,7 +287,8 @@ export function VideoProcessor() {
 
       // Check if all scenes have audio and images
       const allScenesReady = scenes.every(
-        scene => scene.status?.audioGenerated && scene.status?.imageGenerated
+        scene => (scene.status?.audioGenerated || scene.audioPath) && 
+                (scene.status?.imageGenerated || scene.imagePath)
       );
 
       if (!allScenesReady) {
@@ -445,7 +426,10 @@ export function VideoProcessor() {
               </button>
               <button
                 onClick={handleGenerateVideo}
-                disabled={!scenes.every(scene => scene.status?.audioGenerated && scene.status?.imageGenerated)}
+                disabled={!scenes.every(scene => 
+                  (scene.status?.audioGenerated || scene.audioPath) && 
+                  (scene.status?.imageGenerated || scene.imagePath)
+                )}
                 className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Generate Final Video
