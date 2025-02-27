@@ -14,6 +14,12 @@ class ProcessingError extends Error {
   }
 }
 
+interface WhisperWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
 interface WhisperTranscriptionResult {
   text: string;
   segments: {
@@ -22,7 +28,17 @@ interface WhisperTranscriptionResult {
     end: number;
     text: string;
     confidence: number;
+    words?: WhisperWord[];
   }[];
+  words?: WhisperWord[];
+}
+
+export interface SubtitleSegment {
+  id: number;
+  start: number;
+  end: number;
+  text: string;
+  words?: WhisperWord[];
 }
 
 /**
@@ -48,6 +64,9 @@ export async function transcribeAudio(audioBlob: Blob): Promise<WhisperTranscrip
     formData.append('model', 'whisper-1');
     formData.append('response_format', 'verbose_json');
     
+    // Important: Use array format for timestamp_granularities
+    formData.append('timestamp_granularities[]', 'word');
+    
     // Make the API request
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
@@ -65,16 +84,59 @@ export async function transcribeAudio(audioBlob: Blob): Promise<WhisperTranscrip
     const result = await response.json();
     console.log('[WhisperService] Transcription successful');
     
-    return {
+    // Log the full response structure to debug
+    console.log('[WhisperService] Raw API response:', JSON.stringify(result, null, 2));
+    
+    // Check if the response has the expected structure
+    if (!result.text) {
+      throw new Error('Invalid response from Whisper API: Missing text field');
+    }
+    
+    // Process the result to include word-level timestamps
+    const processedResult: WhisperTranscriptionResult = {
       text: result.text,
-      segments: result.segments.map((segment: any) => ({
+      segments: []
+    };
+    
+    // Check if segments exist before mapping
+    if (result.segments && Array.isArray(result.segments)) {
+      processedResult.segments = result.segments.map((segment: any) => ({
         id: segment.id,
         start: segment.start,
         end: segment.end,
         text: segment.text,
-        confidence: segment.confidence
-      }))
-    };
+        confidence: segment.confidence,
+        words: segment.words || [] // Include word-level timestamps if available
+      }));
+    } else {
+      console.warn('[WhisperService] No segments found in Whisper response, creating a single segment');
+      // Create a single segment if none exist
+      processedResult.segments = [{
+        id: 0,
+        start: 0,
+        end: 30, // Assume 30 seconds if we don't know
+        text: result.text,
+        confidence: 1.0
+      }];
+    }
+    
+    // Add global words if available
+    if (result.words && Array.isArray(result.words)) {
+      processedResult.words = result.words;
+      
+      // If we have global words but no segments with words, add words to the first segment
+      if (processedResult.segments.length > 0 && 
+          (!processedResult.segments[0].words || processedResult.segments[0].words.length === 0)) {
+        processedResult.segments[0].words = result.words;
+      }
+      
+      console.log('[WhisperService] Word-level timestamps received:', result.words.length);
+      console.log('[WhisperService] Sample words:', result.words.slice(0, 3));
+    } else {
+      console.warn('[WhisperService] No word-level timestamps found in response');
+    }
+    
+    return processedResult;
   } catch (error: any) {
     console.error('[WhisperService] Transcription error:', error);
     throw new ProcessingError({
@@ -136,13 +198,6 @@ ${segment.text.trim()}`;
   return header + cues;
 }
 
-export interface SubtitleSegment {
-  id: number;
-  start: number;
-  end: number;
-  text: string;
-}
-
 /**
  * Convert Whisper transcription to subtitle segments for rendering
  * @param transcription The Whisper transcription result
@@ -153,6 +208,7 @@ export function getSubtitleSegments(transcription: WhisperTranscriptionResult): 
     id: segment.id,
     start: segment.start,
     end: segment.end,
-    text: segment.text.trim()
+    text: segment.text.trim(),
+    words: segment.words || [] // Include word-level timestamps if available
   }));
 }

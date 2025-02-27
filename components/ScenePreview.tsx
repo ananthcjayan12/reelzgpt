@@ -20,10 +20,23 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isGeneratingSubtitles, setIsGeneratingSubtitles] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  
+  // Edit mode states
+  const [isEditingNarration, setIsEditingNarration] = useState(false);
+  const [isEditingImagePrompt, setIsEditingImagePrompt] = useState(false);
+  const [editedNarration, setEditedNarration] = useState(scene.narration);
+  const [editedImagePrompt, setEditedImagePrompt] = useState(scene.imagePrompt);
+  
   const { updateScene, setError } = useProjectActions();
   const fileSystem = new FileSystemService();
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
+  // Update edited content when scene changes
+  useEffect(() => {
+    setEditedNarration(scene.narration);
+    setEditedImagePrompt(scene.imagePrompt);
+  }, [scene.narration, scene.imagePrompt]);
 
   // Load image and audio when component mounts or paths change
   useEffect(() => {
@@ -148,18 +161,37 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
       
       // Get the audio blob
       const audioBlob = await fileSystem.readFile(scene.audioPath, 'audio');
+      console.log('[ScenePreview] Audio blob retrieved:', {
+        type: audioBlob.type,
+        size: audioBlob.size
+      });
       
       // Transcribe audio using Whisper
+      console.log('[ScenePreview] Calling Whisper transcription service...');
       const transcription = await transcribeAudio(audioBlob);
       
-      // Update scene with subtitles
+      // Log the transcription result for debugging
+      console.log('[ScenePreview] Transcription result:', {
+        text: transcription.text,
+        segmentsCount: transcription.segments?.length || 0,
+        hasWords: Boolean(transcription.words && transcription.words.length > 0),
+        firstSegment: transcription.segments && transcription.segments[0] ? {
+          start: transcription.segments[0].start,
+          end: transcription.segments[0].end,
+          text: transcription.segments[0].text,
+          hasWords: Boolean(transcription.segments[0].words && transcription.segments[0].words.length > 0)
+        } : 'No segments'
+      });
+      
+      // Update scene with subtitles, including word-level timestamps
       updateScene(scene.id, { 
         subtitles: {
           segments: transcription.segments.map(segment => ({
             id: segment.id,
             start: segment.start,
             end: segment.end,
-            text: segment.text.trim()
+            text: segment.text.trim(),
+            words: segment.words || [] // Include word-level timestamps if available
           })),
           format: 'vtt',
           style: 'tiktok'
@@ -169,6 +201,9 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
           subtitlesGenerated: true 
         }
       });
+      
+      console.log('[ScenePreview] Generated subtitles with word-level timestamps:', 
+        transcription.segments.some(s => s.words && s.words.length > 0) ? 'Yes' : 'No');
     } catch (error: any) {
       console.error('Error generating subtitles:', error);
       
@@ -181,15 +216,69 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
           message: error.message,
           timestamp: new Date(),
         });
+        
+        // Show a more detailed alert for debugging
+        alert(`Failed to generate subtitles: ${error.message}\nPlease check the console for more details.`);
       }
     } finally {
       setIsGeneratingSubtitles(false);
     }
   };
 
+  const handleSaveNarration = () => {
+    updateScene(scene.id, { 
+      narration: editedNarration,
+      // If narration changes, mark audio as needing regeneration
+      status: { 
+        ...scene.status, 
+        audioGenerated: false 
+      },
+      // Clear audio path if it exists
+      audioPath: undefined,
+      // Clear subtitles if they exist
+      subtitles: undefined
+    });
+    setIsEditingNarration(false);
+  };
+
+  const handleSaveImagePrompt = () => {
+    updateScene(scene.id, { 
+      imagePrompt: editedImagePrompt,
+      // If image prompt changes, mark image as needing regeneration
+      status: { 
+        ...scene.status, 
+        imageGenerated: false 
+      },
+      // Clear image path if it exists
+      imagePath: undefined
+    });
+    setIsEditingImagePrompt(false);
+  };
+
   const handlePlayPreview = () => {
     setIsPlaying(true);
   };
+
+  // Button component for regenerate/edit actions
+  const ActionButton = ({ 
+    onClick, 
+    disabled = false, 
+    className = "", 
+    children 
+  }: { 
+    onClick: () => void, 
+    disabled?: boolean, 
+    className?: string, 
+    children: React.ReactNode 
+  }) => (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`px-2 py-1 text-xs rounded-md ${className}`}
+    >
+      {children}
+    </button>
+  );
 
   return (
     <div className="border rounded-lg p-4 space-y-4 bg-white shadow-sm">
@@ -205,16 +294,90 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <h4 className="font-medium mb-2">Narration</h4>
-          <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-md h-32 overflow-y-auto">
-            {scene.narration}
-          </p>
+          <div className="mb-4">
+            <div className="flex justify-between items-center mb-2">
+              <h4 className="font-medium">Narration</h4>
+              <div className="flex space-x-2">
+                <ActionButton 
+                  onClick={() => setIsEditingNarration(!isEditingNarration)}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800"
+                >
+                  {isEditingNarration ? 'Cancel' : 'Edit'}
+                </ActionButton>
+                {isEditingNarration && (
+                  <ActionButton 
+                    onClick={handleSaveNarration}
+                    className="bg-green-500 hover:bg-green-600 text-white"
+                  >
+                    Save
+                  </ActionButton>
+                )}
+                {!isEditingNarration && scene.audioPath && (
+                  <ActionButton 
+                    onClick={handleGenerateAudio}
+                    disabled={isGeneratingAudio}
+                    className="bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGeneratingAudio ? 'Regenerating...' : 'Regenerate'}
+                  </ActionButton>
+                )}
+              </div>
+            </div>
+            {isEditingNarration ? (
+              <textarea
+                value={editedNarration}
+                onChange={(e) => setEditedNarration(e.target.value)}
+                className="w-full h-32 p-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter narration text"
+              />
+            ) : (
+              <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-md h-32 overflow-y-auto">
+                {scene.narration}
+              </p>
+            )}
+          </div>
           
-          <div className="mt-4">
-            <h4 className="font-medium mb-2">Image Prompt</h4>
-            <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-md h-32 overflow-y-auto">
-              {scene.imagePrompt}
-            </p>
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <h4 className="font-medium">Image Prompt</h4>
+              <div className="flex space-x-2">
+                <ActionButton 
+                  onClick={() => setIsEditingImagePrompt(!isEditingImagePrompt)}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800"
+                >
+                  {isEditingImagePrompt ? 'Cancel' : 'Edit'}
+                </ActionButton>
+                {isEditingImagePrompt && (
+                  <ActionButton 
+                    onClick={handleSaveImagePrompt}
+                    className="bg-green-500 hover:bg-green-600 text-white"
+                  >
+                    Save
+                  </ActionButton>
+                )}
+                {!isEditingImagePrompt && scene.imagePath && (
+                  <ActionButton 
+                    onClick={handleGenerateImage}
+                    disabled={isGeneratingImage}
+                    className="bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGeneratingImage ? 'Regenerating...' : 'Regenerate'}
+                  </ActionButton>
+                )}
+              </div>
+            </div>
+            {isEditingImagePrompt ? (
+              <textarea
+                value={editedImagePrompt}
+                onChange={(e) => setEditedImagePrompt(e.target.value)}
+                className="w-full h-32 p-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter image prompt"
+              />
+            ) : (
+              <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-md h-32 overflow-y-auto">
+                {scene.imagePrompt}
+              </p>
+            )}
           </div>
         </div>
         
@@ -254,17 +417,19 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
           <div>
             <h4 className="font-medium mb-2">Audio</h4>
             {scene.audioPath ? (
-              audioUrl ? (
-                <audio
-                  src={audioUrl}
-                  controls
-                  className="w-full"
-                />
-              ) : (
-                <div className="h-10 bg-gray-100 rounded-md flex items-center justify-center">
-                  <p className="text-gray-500">Loading audio...</p>
-                </div>
-              )
+              <div className="space-y-2">
+                {audioUrl ? (
+                  <audio
+                    src={audioUrl}
+                    controls
+                    className="w-full"
+                  />
+                ) : (
+                  <div className="h-10 bg-gray-100 rounded-md flex items-center justify-center">
+                    <p className="text-gray-500">Loading audio...</p>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="flex justify-center items-center h-12 bg-gray-100 rounded-md">
                 <button
@@ -279,8 +444,19 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
           </div>
           
           <div>
-            <h4 className="font-medium mb-2">Subtitles</h4>
-            {scene.subtitles?.segments?.length ? (
+            <div className="flex justify-between items-center mb-2">
+              <h4 className="font-medium">Subtitles</h4>
+              {scene.subtitles && scene.subtitles.segments && scene.subtitles.segments.length > 0 && (
+                <ActionButton 
+                  onClick={handleGenerateSubtitles}
+                  disabled={isGeneratingSubtitles || !scene.audioPath}
+                  className="bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isGeneratingSubtitles ? 'Regenerating...' : 'Regenerate'}
+                </ActionButton>
+              )}
+            </div>
+            {scene.subtitles && scene.subtitles.segments && scene.subtitles.segments.length > 0 ? (
               <div className="text-sm text-gray-700 bg-gray-50 p-3 rounded-md max-h-32 overflow-y-auto">
                 <p className="text-xs text-gray-500 mb-2">
                   {scene.subtitles.segments.length} subtitle segments generated

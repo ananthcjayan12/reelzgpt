@@ -130,8 +130,7 @@ export function VideoPlayerWithSubtitles({
           <StylizedSubtitles
             subtitles={subtitles}
             currentTime={currentTime}
-            style={subtitleStyle}
-            position={subtitlePosition}
+            style={subtitleStyle === 'minimal' || subtitleStyle === 'caption' ? 'default' : subtitleStyle}
           />
         )}
       </div>
