@@ -13,6 +13,7 @@ import { FileSystemService } from '@/lib/services/filesystem';
 import { transcribeAudio, generateVTT, SubtitleSegment } from '@/lib/services/whisper';
 import { useSettingsStore } from '@/lib/store/settings';
 import { Settings } from '@/components/Settings';
+import { VideoPlayerWithSubtitles } from '@/components/VideoPlayerWithSubtitles';
 
 export function VideoProcessor() {
   const [url, setUrl] = useState('');
@@ -31,6 +32,8 @@ export function VideoProcessor() {
   const [isClearing, setIsClearing] = useState(false);
   const fileSystemRef = useRef<FileSystemService | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
+  const [posterImageUrl, setPosterImageUrl] = useState<string | null>(null);
 
   // Initialize FileSystemService only on the client side
   useEffect(() => {
@@ -38,6 +41,30 @@ export function VideoProcessor() {
     // Load cache size after FileSystemService is initialized
     loadCacheSize();
   }, []);
+
+  // Load poster image when scenes change
+  useEffect(() => {
+    const loadPosterImage = async () => {
+      if (scenes.length > 0 && scenes[0].imagePath && fileSystemRef.current) {
+        try {
+          const imageBlob = await fileSystemRef.current.readFile(scenes[0].imagePath, 'image');
+          const imageUrl = URL.createObjectURL(imageBlob);
+          setPosterImageUrl(imageUrl);
+        } catch (error) {
+          console.error('Failed to load poster image:', error);
+        }
+      }
+    };
+    
+    loadPosterImage();
+    
+    // Clean up function to revoke object URL
+    return () => {
+      if (posterImageUrl) {
+        URL.revokeObjectURL(posterImageUrl);
+      }
+    };
+  }, [scenes]);
 
   // Debug log for video button state
   useEffect(() => {
@@ -52,6 +79,15 @@ export function VideoProcessor() {
       })));
     }
   }, [scenes]);
+
+  // Clean up video URL when component unmounts
+  useEffect(() => {
+    return () => {
+      if (generatedVideoUrl) {
+        URL.revokeObjectURL(generatedVideoUrl);
+      }
+    };
+  }, [generatedVideoUrl]);
 
   const loadCacheSize = async () => {
     if (!fileSystemRef.current) return;
@@ -435,8 +471,14 @@ export function VideoProcessor() {
       
       console.log('[VideoProcessor] Video generation complete, creating download link');
       
-      // Create download link
+      // Create video URL for preview
+      if (generatedVideoUrl) {
+        URL.revokeObjectURL(generatedVideoUrl);
+      }
       const videoUrl = URL.createObjectURL(video);
+      setGeneratedVideoUrl(videoUrl);
+      
+      // Create download link
       const a = document.createElement('a');
       a.href = videoUrl;
       
@@ -449,11 +491,6 @@ export function VideoProcessor() {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      
-      // Clean up the URL
-      setTimeout(() => {
-        URL.revokeObjectURL(videoUrl);
-      }, 100);
       
       console.log('[VideoProcessor] Video download initiated');
 
@@ -520,6 +557,50 @@ export function VideoProcessor() {
               </button>
             </div>
             <Settings />
+          </div>
+        </div>
+      )}
+
+      {/* Video Preview */}
+      {generatedVideoUrl && (
+        <div className="bg-gray-100 p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-4">Generated Video Preview</h2>
+          <div className="aspect-video bg-black rounded-lg overflow-hidden">
+            <video 
+              src={generatedVideoUrl} 
+              controls 
+              className="w-full h-full"
+              poster={posterImageUrl || undefined}
+            />
+          </div>
+          <div className="mt-4 flex justify-between">
+            <button
+              onClick={() => {
+                const a = document.createElement('a');
+                a.href = generatedVideoUrl;
+                const projectTitle = currentProject?.title || 'generated-video';
+                const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+                const timestamp = new Date().toISOString().split('T')[0];
+                a.download = `${safeTitle}-${timestamp}.webm`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+              }}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+            >
+              Download Video
+            </button>
+            <button
+              onClick={() => {
+                if (generatedVideoUrl) {
+                  URL.revokeObjectURL(generatedVideoUrl);
+                  setGeneratedVideoUrl(null);
+                }
+              }}
+              className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+            >
+              Close Preview
+            </button>
           </div>
         </div>
       )}

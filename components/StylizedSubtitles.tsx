@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { SubtitleSegment } from '@/lib/services/whisper';
+import { useSettingsStore } from '@/lib/store/settings';
 
 interface DisplayWord {
   word: string;
@@ -21,6 +22,10 @@ export function StylizedSubtitles({ subtitles, currentTime, style = 'default' }:
   const [progress, setProgress] = useState(0);
   const [activeSubtitle, setActiveSubtitle] = useState<SubtitleSegment | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Get subtitle settings from the store
+  const { subtitleSettings } = useSettingsStore();
+  const { highlightColor, displayWordCount, fontSize, showProgressBar } = subtitleSettings;
 
   useEffect(() => {
     if (!subtitles || subtitles.length === 0) {
@@ -59,9 +64,14 @@ export function StylizedSubtitles({ subtitles, currentTime, style = 'default' }:
         ? focusWordIndex 
         : active.words.findIndex(word => word.start > currentTime);
 
-      // Determine which words to display (focus word, next word, and up to 2 preceding words)
-      const startIndex = Math.max(0, effectiveFocusIndex - 2);
-      const endIndex = Math.min(active.words.length, effectiveFocusIndex + 2);
+      // Calculate how many words to show before and after the focus word
+      const totalWords = displayWordCount;
+      const wordsBefore = Math.floor((totalWords - 1) / 2);
+      const wordsAfter = totalWords - wordsBefore - 1;
+      
+      // Determine which words to display around the focus word
+      const startIndex = Math.max(0, effectiveFocusIndex - wordsBefore);
+      const endIndex = Math.min(active.words.length, startIndex + totalWords);
       
       const wordsToDisplay = active.words
         .slice(startIndex, endIndex)
@@ -83,9 +93,14 @@ export function StylizedSubtitles({ subtitles, currentTime, style = 'default' }:
         words.length - 1
       );
       
+      // Calculate how many words to show before and after the focus word
+      const totalWords = Math.min(displayWordCount, words.length);
+      const wordsBefore = Math.floor((totalWords - 1) / 2);
+      const wordsAfter = totalWords - wordsBefore - 1;
+      
       // Get a window of words around the focus word
-      const startIndex = Math.max(0, estimatedFocusIndex - 2);
-      const endIndex = Math.min(words.length, estimatedFocusIndex + 2);
+      const startIndex = Math.max(0, estimatedFocusIndex - wordsBefore);
+      const endIndex = Math.min(words.length, startIndex + totalWords);
       
       const wordsToDisplay = words
         .slice(startIndex, endIndex)
@@ -98,7 +113,7 @@ export function StylizedSubtitles({ subtitles, currentTime, style = 'default' }:
       
       setDisplayWords(wordsToDisplay);
     }
-  }, [subtitles, currentTime]);
+  }, [subtitles, currentTime, displayWordCount]);
 
   if (!activeSubtitle || displayWords.length === 0) {
     return null;
@@ -140,9 +155,9 @@ export function StylizedSubtitles({ subtitles, currentTime, style = 'default' }:
           <span 
             key={index}
             style={{
-              color: word.isFocus ? '#ff4d4d' : 'white',
+              color: word.isFocus ? highlightColor : 'white',
               fontWeight: word.isFocus ? 'bold' : 'normal',
-              fontSize: '1.25rem',
+              fontSize: `${fontSize}px`,
               transition: 'color 0.2s, transform 0.2s',
               transform: word.isFocus ? 'scale(1.1)' : 'scale(1)',
               display: 'inline-block',
@@ -154,27 +169,29 @@ export function StylizedSubtitles({ subtitles, currentTime, style = 'default' }:
       </div>
       
       {/* Progress bar */}
-      <div 
-        className="subtitle-progress"
-        style={{
-          width: '50%',
-          height: '4px',
-          backgroundColor: 'rgba(255, 255, 255, 0.3)',
-          borderRadius: '2px',
-          marginTop: '0.5rem',
-          overflow: 'hidden',
-        }}
-      >
+      {showProgressBar && (
         <div 
-          className="subtitle-progress-fill"
+          className="subtitle-progress"
           style={{
-            height: '100%',
-            width: `${progress * 100}%`,
-            backgroundColor: '#ff4d4d',
-            transition: 'width 0.1s linear',
+            width: '50%',
+            height: '4px',
+            backgroundColor: 'rgba(255, 255, 255, 0.3)',
+            borderRadius: '2px',
+            marginTop: '0.5rem',
+            overflow: 'hidden',
           }}
-        />
-      </div>
+        >
+          <div 
+            className="subtitle-progress-fill"
+            style={{
+              height: '100%',
+              width: `${progress * 100}%`,
+              backgroundColor: highlightColor,
+              transition: 'width 0.1s linear',
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 } 

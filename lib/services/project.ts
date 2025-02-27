@@ -4,6 +4,7 @@ import { generateScenesAndDetails, generateAudio } from './openai';
 import { generateImage, generateThumbnail, downloadImage } from './replicate';
 import { VideoProcessor } from './video';
 import { useProjectStore } from '@/lib/store';
+import { useSettingsStore } from '@/lib/store/settings';
 import { FileSystemService } from './filesystem';
 
 // Create a proper error class
@@ -159,6 +160,10 @@ export class ProjectService {
   async generateVideo(scenes: Scene[], project: Project): Promise<Blob> {
     try {
       console.log('[ProjectService] Generating video from scenes');
+      
+      // Get subtitle settings from the store
+      const { subtitleSettings } = useSettingsStore.getState();
+      const { highlightColor, displayWordCount, fontSize, showProgressBar } = subtitleSettings;
       
       // Sort scenes by order
       const sortedScenes = [...scenes].sort((a, b) => a.order - b.order);
@@ -341,9 +346,14 @@ export class ProjectService {
                           word.start > elapsedSeconds
                       );
                   
-                  // Determine which words to display (focus word, next word, and up to 2 preceding words)
-                  const startIndex = Math.max(0, effectiveFocusIndex - 2);
-                  const endIndex = Math.min(activeSegment.words.length, effectiveFocusIndex + 2);
+                  // Calculate how many words to show before and after the focus word
+                  const totalWords = Math.min(displayWordCount, activeSegment.words.length);
+                  const wordsBefore = Math.floor((totalWords - 1) / 2);
+                  const wordsAfter = totalWords - wordsBefore - 1;
+                  
+                  // Determine which words to display around the focus word
+                  const startIndex = Math.max(0, effectiveFocusIndex - wordsBefore);
+                  const endIndex = Math.min(activeSegment.words.length, startIndex + totalWords);
                   
                   displayWords = activeSegment.words
                     .slice(startIndex, endIndex)
@@ -361,9 +371,14 @@ export class ProjectService {
                     words.length - 1
                   );
                   
+                  // Calculate how many words to show before and after the focus word
+                  const totalWords = Math.min(displayWordCount, words.length);
+                  const wordsBefore = Math.floor((totalWords - 1) / 2);
+                  const wordsAfter = totalWords - wordsBefore - 1;
+                  
                   // Get a window of words around the focus word
-                  const startIndex = Math.max(0, estimatedFocusIndex - 2);
-                  const endIndex = Math.min(words.length, estimatedFocusIndex + 2);
+                  const startIndex = Math.max(0, estimatedFocusIndex - wordsBefore);
+                  const endIndex = Math.min(words.length, startIndex + totalWords);
                   
                   displayWords = words
                     .slice(startIndex, endIndex)
@@ -385,7 +400,6 @@ export class ProjectService {
                 const textY = subtitleAreaY + (subtitleAreaHeight * 0.5);
                 
                 // Set text properties
-                const fontSize = Math.max(canvas.width * 0.03, 24); // Responsive font size
                 ctx.font = `bold ${fontSize}px Arial, sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
@@ -404,26 +418,28 @@ export class ProjectService {
                   const wordWidth = ctx.measureText(word.word).width;
                   
                   // Draw word
-                  ctx.fillStyle = word.isFocus ? '#ff4d4d' : 'white';
+                  ctx.fillStyle = word.isFocus ? highlightColor : 'white';
                   ctx.fillText(word.word, currentX + (wordWidth / 2), textY);
                   
                   // Move to next word position
                   currentX += wordWidth + fontSize * 0.5;
                 });
                 
-                // Draw progress bar
-                const progressBarHeight = 4;
-                const progressBarWidth = canvas.width * 0.5;
-                const progressBarX = (canvas.width - progressBarWidth) / 2;
-                const progressBarY = subtitleAreaY + subtitleAreaHeight - 20;
-                
-                // Background of progress bar
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-                ctx.fillRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight);
-                
-                // Filled part of progress bar
-                ctx.fillStyle = '#ff4d4d';
-                ctx.fillRect(progressBarX, progressBarY, progressBarWidth * progress, progressBarHeight);
+                // Draw progress bar if enabled
+                if (showProgressBar) {
+                  const progressBarHeight = 4;
+                  const progressBarWidth = canvas.width * 0.5;
+                  const progressBarX = (canvas.width - progressBarWidth) / 2;
+                  const progressBarY = subtitleAreaY + subtitleAreaHeight - 20;
+                  
+                  // Background of progress bar
+                  ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                  ctx.fillRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight);
+                  
+                  // Filled part of progress bar
+                  ctx.fillStyle = highlightColor;
+                  ctx.fillRect(progressBarX, progressBarY, progressBarWidth * progress, progressBarHeight);
+                }
               }
               
               // Continue animation

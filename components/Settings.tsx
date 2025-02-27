@@ -9,16 +9,18 @@ export function Settings() {
     openaiApiKey,
     replicateApiKey,
     selectedModel,
+    subtitleSettings,
     setOpenAIKey,
     setReplicateKey,
     setSelectedModel,
+    setSubtitleSettings,
   } = useSettingsStore();
 
   const [isTestingOpenAI, setIsTestingOpenAI] = useState(false);
   const [isTestingReplicate, setIsTestingReplicate] = useState(false);
   const [openAIStatus, setOpenAIStatus] = useState<'success' | 'error' | null>(null);
   const [replicateStatus, setReplicateStatus] = useState<'success' | 'error' | null>(null);
-  const [activeTab, setActiveTab] = useState<'api' | 'prompts'>('api');
+  const [activeTab, setActiveTab] = useState<'api' | 'prompts' | 'subtitles'>('api');
 
   const testOpenAIKey = async () => {
     setIsTestingOpenAI(true);
@@ -67,6 +69,16 @@ export function Settings() {
           onClick={() => setActiveTab('prompts')}
         >
           Prompt Templates
+        </button>
+        <button
+          className={`px-4 py-2 ${
+            activeTab === 'subtitles'
+              ? 'border-b-2 border-blue-500 text-blue-600'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+          onClick={() => setActiveTab('subtitles')}
+        >
+          Subtitle Settings
         </button>
       </div>
       
@@ -163,6 +175,132 @@ export function Settings() {
       
       {/* Prompt Templates Tab */}
       {activeTab === 'prompts' && <PromptTemplates />}
+
+      {/* Subtitle Settings Tab */}
+      {activeTab === 'subtitles' && (
+        <div className="space-y-6 p-6 bg-white rounded-lg shadow">
+          <div className="space-y-4">
+            <h3 className="text-lg font-medium">Subtitle Appearance</h3>
+            
+            {/* Highlight Color */}
+            <div className="space-y-2">
+              <label className="block text-sm font-medium">
+                Highlight Color
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={subtitleSettings.highlightColor}
+                  onChange={(e) => setSubtitleSettings({ highlightColor: e.target.value })}
+                  className="w-10 h-10 rounded cursor-pointer"
+                />
+                <input
+                  type="text"
+                  value={subtitleSettings.highlightColor}
+                  onChange={(e) => setSubtitleSettings({ highlightColor: e.target.value })}
+                  className="px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-32"
+                />
+                <div className="flex-1">
+                  <span className="text-sm text-gray-500">Color for highlighted words</span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Display Word Count */}
+            <div className="space-y-2">
+              <label className="block text-sm font-medium">
+                Words to Display
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="2"
+                  max="10"
+                  value={subtitleSettings.displayWordCount}
+                  onChange={(e) => setSubtitleSettings({ displayWordCount: parseInt(e.target.value) })}
+                  className="w-48"
+                />
+                <span className="w-8 text-center">{subtitleSettings.displayWordCount}</span>
+                <div className="flex-1">
+                  <span className="text-sm text-gray-500">Number of words to show at once</span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Font Size */}
+            <div className="space-y-2">
+              <label className="block text-sm font-medium">
+                Font Size
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="16"
+                  max="48"
+                  value={subtitleSettings.fontSize}
+                  onChange={(e) => setSubtitleSettings({ fontSize: parseInt(e.target.value) })}
+                  className="w-48"
+                />
+                <span className="w-8 text-center">{subtitleSettings.fontSize}px</span>
+                <div className="flex-1">
+                  <span className="text-sm text-gray-500">Size of subtitle text</span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Progress Bar Toggle */}
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={subtitleSettings.showProgressBar}
+                  onChange={(e) => setSubtitleSettings({ showProgressBar: e.target.checked })}
+                  className="w-4 h-4"
+                />
+                <span className="text-sm font-medium">Show Progress Bar</span>
+              </label>
+              <div className="pl-6">
+                <span className="text-sm text-gray-500">Display a progress bar below subtitles</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+            <h4 className="text-sm font-medium mb-2">Preview</h4>
+            <div className="relative bg-black rounded-lg h-24 flex items-center justify-center">
+              <div className="subtitle-container flex flex-col items-center">
+                <div className="subtitle-words flex gap-2 p-2 bg-black bg-opacity-60 rounded-lg">
+                  {['This', 'is', 'a', 'sample', 'text'].map((word, index) => (
+                    <span 
+                      key={index}
+                      style={{
+                        color: index === 2 ? subtitleSettings.highlightColor : 'white',
+                        fontWeight: index === 2 ? 'bold' : 'normal',
+                        fontSize: `${subtitleSettings.fontSize}px`,
+                        transform: index === 2 ? 'scale(1.1)' : 'scale(1)',
+                      }}
+                    >
+                      {word}
+                    </span>
+                  ))}
+                </div>
+                
+                {subtitleSettings.showProgressBar && (
+                  <div className="subtitle-progress w-32 h-1 bg-white bg-opacity-30 rounded mt-2">
+                    <div 
+                      className="h-full rounded"
+                      style={{ 
+                        width: '60%', 
+                        backgroundColor: subtitleSettings.highlightColor 
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 
