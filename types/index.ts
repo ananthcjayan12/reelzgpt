@@ -7,9 +7,20 @@ export interface Scene {
   audioPath?: string;  // Path to the audio file in local storage
   imagePath?: string;  // Path to the image file in local storage
   order: number;
-  status: {
-    audioGenerated: boolean;
-    imageGenerated: boolean;
+  subtitles?: {
+    segments: {
+      id: number;
+      start: number;
+      end: number;
+      text: string;
+    }[];
+    format?: 'srt' | 'vtt';
+    style?: 'tiktok' | 'minimal' | 'caption';
+  };
+  status?: {
+    audioGenerated?: boolean;
+    imageGenerated?: boolean;
+    subtitlesGenerated?: boolean;
   };
 }
 
@@ -24,6 +35,8 @@ export interface YouTubeDetails {
 // Project represents the entire video generation project
 export interface Project {
   id: string;
+  title: string;
+  description?: string;
   youtubeUrl: string;
   transcription: string;
   scenes: Scene[];
@@ -45,6 +58,6 @@ export interface ProgressStatus {
 export interface ProcessingError {
   stage: string;
   message: string;
-  details?: any;
   timestamp: Date;
+  details?: any;
 } 

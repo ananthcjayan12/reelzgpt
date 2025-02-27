@@ -10,6 +10,9 @@ import { ProjectList } from '@/components/ProjectList';
 import { generateAudio } from '@/lib/services/openai';
 import { generateImage, downloadImage } from '@/lib/services/replicate';
 import { FileSystemService } from '@/lib/services/filesystem';
+import { transcribeAudio, generateVTT, SubtitleSegment } from '@/lib/services/whisper';
+import { useSettingsStore } from '@/lib/store/settings';
+import { Settings } from '@/components/Settings';
 
 export function VideoProcessor() {
   const [url, setUrl] = useState('');
@@ -21,10 +24,13 @@ export function VideoProcessor() {
   const projectService = new ProjectService();
   const [isGeneratingAllAudio, setIsGeneratingAllAudio] = useState(false);
   const [isGeneratingAllImages, setIsGeneratingAllImages] = useState(false);
+  const [isGeneratingAllSubtitles, setIsGeneratingAllSubtitles] = useState(false);
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [cacheSize, setCacheSize] = useState<{ total: number; audio: number; image: number; video: number } | null>(null);
   const [isLoadingCacheSize, setIsLoadingCacheSize] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const fileSystemRef = useRef<FileSystemService | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Initialize FileSystemService only on the client side
   useEffect(() => {
@@ -279,10 +285,135 @@ export function VideoProcessor() {
     }
   };
 
+  const handleGenerateAllSubtitles = async () => {
+    if (!currentProject) {
+      alert('Please create a project first');
+      return;
+    }
+
+    if (!scenes || scenes.length === 0) {
+      alert('No scenes to generate subtitles for');
+      return;
+    }
+
+    // Check if OpenAI API key is set
+    const settings = useSettingsStore.getState();
+    if (!settings.openaiApiKey) {
+      alert('OpenAI API key is not set. Please configure it in the settings.');
+      return;
+    }
+
+    try {
+      setIsGeneratingAllSubtitles(true);
+      
+      // Initialize file system with user interaction
+      if (fileSystemRef.current) {
+        await fileSystemRef.current.initialize(true);
+      }
+
+      for (const scene of scenes) {
+        if (!scene.audioPath) {
+          console.log(`[VideoProcessor] Scene ${scene.id} has no audio, skipping subtitle generation`);
+          continue;
+        }
+        
+        // Skip if already has subtitles
+        if (scene.subtitles?.segments?.length) {
+          console.log(`[VideoProcessor] Scene ${scene.id} already has subtitles, skipping`);
+          continue;
+        }
+        
+        try {
+          console.log(`[VideoProcessor] Generating subtitles for scene ${scene.id}`);
+          
+          // Get the audio blob
+          let audioBlob: Blob;
+          if (fileSystemRef.current) {
+            audioBlob = await fileSystemRef.current.readFile(scene.audioPath, 'audio');
+          } else {
+            console.warn('[VideoProcessor] File system not available, cannot read audio');
+            continue;
+          }
+          
+          // Transcribe audio using Whisper
+          const transcription = await transcribeAudio(audioBlob);
+          
+          // Generate VTT format
+          const vttContent = generateVTT(transcription);
+          
+          // Save VTT file
+          if (fileSystemRef.current) {
+            const filename = `scene-${scene.id}-subtitles.vtt`;
+            console.log(`[VideoProcessor] Saving subtitles file: ${filename}`);
+            await fileSystemRef.current.saveFile(
+              new Blob([vttContent], { type: 'text/vtt' }), 
+              filename, 
+              'video'
+            );
+          }
+          
+          // Update scene with subtitles
+          const subtitleSegments: SubtitleSegment[] = transcription.segments.map(segment => ({
+            id: segment.id,
+            start: segment.start,
+            end: segment.end,
+            text: segment.text.trim()
+          }));
+          
+          updateScene(scene.id, { 
+            subtitles: {
+              segments: subtitleSegments,
+              format: 'vtt',
+              style: 'tiktok'
+            },
+            status: { 
+              ...scene.status, 
+              subtitlesGenerated: true 
+            }
+          });
+          
+          console.log(`[VideoProcessor] Subtitles generated for scene ${scene.id}`);
+        } catch (error: any) {
+          console.error(`[VideoProcessor] Error generating subtitles for scene ${scene.id}:`, error);
+          
+          // Show a more user-friendly error message for API key issues
+          if (error.message.includes('API key')) {
+            alert(`Failed to transcribe audio for scene ${scene.id}: Please check your OpenAI API key in settings.`);
+            break; // Stop processing other scenes if API key is invalid
+          } else {
+            setError({
+              message: `Failed to generate subtitles for scene ${scene.id}: ${error.message}`,
+              stage: 'subtitle-generation',
+              timestamp: new Date()
+            });
+          }
+        }
+      }
+      
+      console.log('[VideoProcessor] All subtitles generation complete');
+    } catch (error: any) {
+      console.error('[VideoProcessor] Error generating all subtitles:', error);
+      
+      // Show a more user-friendly error message for API key issues
+      if (error.message.includes('API key')) {
+        alert('Failed to transcribe audio: Please check your OpenAI API key in settings.');
+      } else {
+        setError({
+          message: `Failed to generate all subtitles: ${error.message}`,
+          stage: 'subtitle-generation',
+          timestamp: new Date()
+        });
+      }
+    } finally {
+      setIsGeneratingAllSubtitles(false);
+    }
+  };
+
   const handleGenerateVideo = async () => {
     try {
       if (!scenes || scenes.length === 0 || !currentProject) {
-        throw new Error('No scenes available to process');
+        alert('No scenes available to process');
+        return;
       }
 
       // Check if all scenes have audio and images
@@ -292,29 +423,51 @@ export function VideoProcessor() {
       );
 
       if (!allScenesReady) {
-        throw new Error('Please generate all audio and images before creating the video');
+        alert('Please generate all audio and images before creating the video');
+        return;
       }
+
+      setIsGeneratingVideo(true);
+      console.log('[VideoProcessor] Starting video generation...');
 
       // Generate the video
       const video = await projectService.generateVideo(scenes, currentProject);
+      
+      console.log('[VideoProcessor] Video generation complete, creating download link');
       
       // Create download link
       const videoUrl = URL.createObjectURL(video);
       const a = document.createElement('a');
       a.href = videoUrl;
-      a.download = 'generated-video.mp4';
+      
+      // Generate a safe filename, handling the case where title might be undefined
+      const projectTitle = currentProject.title || 'generated-video';
+      const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+      const timestamp = new Date().toISOString().split('T')[0];
+      a.download = `${safeTitle}-${timestamp}.webm`;
+      
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(videoUrl);
+      
+      // Clean up the URL
+      setTimeout(() => {
+        URL.revokeObjectURL(videoUrl);
+      }, 100);
+      
+      console.log('[VideoProcessor] Video download initiated');
 
     } catch (error: any) {
+      console.error('[VideoProcessor] Error generating video:', error);
+      alert(`Failed to generate video: ${error.message}`);
       setError({
         stage: 'video-processing',
         message: error.message,
         details: error,
         timestamp: new Date(),
       });
+    } finally {
+      setIsGeneratingVideo(false);
     }
   };
 
@@ -336,7 +489,40 @@ export function VideoProcessor() {
         <p className="text-gray-500 text-center">
           Enter a YouTube URL to create an AI-powered video with narration and visuals
         </p>
+        
+        {/* Settings button */}
+        <div className="flex justify-end">
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 flex items-center gap-2"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+            </svg>
+            Settings
+          </button>
+        </div>
       </div>
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold">Settings</h2>
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <Settings />
+          </div>
+        </div>
+      )}
 
       {/* Cache info and clear button */}
       <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
@@ -425,15 +611,35 @@ export function VideoProcessor() {
                 {isGeneratingAllImages ? 'Generating...' : 'Generate All Images'}
               </button>
               <button
-                onClick={handleGenerateVideo}
-                disabled={!scenes.every(scene => 
-                  (scene.status?.audioGenerated || scene.audioPath) && 
-                  (scene.status?.imageGenerated || scene.imagePath)
-                )}
-                className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleGenerateAllSubtitles}
+                disabled={
+                  isGeneratingAllSubtitles || 
+                  scenes.every(scene => scene.status?.subtitlesGenerated) ||
+                  !scenes.some(scene => scene.audioPath)
+                }
+                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Generate Final Video
+                {isGeneratingAllSubtitles ? 'Generating...' : 'Generate All Subtitles'}
               </button>
+              <div className="flex justify-center mt-6">
+                <button
+                  onClick={handleGenerateVideo}
+                  disabled={isGeneratingVideo || !scenes || scenes.length === 0}
+                  className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isGeneratingVideo ? (
+                    <span className="flex items-center">
+                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Generating Video...
+                    </span>
+                  ) : (
+                    'Generate Final Video'
+                  )}
+                </button>
+              </div>
             </div>
           </div>
           <div className="grid gap-6">

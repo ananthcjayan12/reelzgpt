@@ -1,10 +1,23 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Project, Scene, YouTubeDetails, ProgressStatus } from '@/types';
+import { Project, Scene, YouTubeDetails, ProgressStatus, ProcessingError as ProcessingErrorClass } from '@/types';
 import { generateScenesAndDetails, generateAudio } from './openai';
 import { generateImage, generateThumbnail, downloadImage } from './replicate';
 import { VideoProcessor } from './video';
 import { useProjectStore } from '@/lib/store';
 import { FileSystemService } from './filesystem';
+
+// Create a proper error class
+class ProcessingError extends Error {
+  stage: string;
+  timestamp: Date;
+
+  constructor({ stage, message, timestamp }: { stage: string; message: string; timestamp: Date }) {
+    super(message);
+    this.stage = stage;
+    this.timestamp = timestamp;
+    this.name = 'ProcessingError';
+  }
+}
 
 export class ProjectService {
   private videoProcessor: VideoProcessor;
@@ -144,56 +157,327 @@ export class ProjectService {
    * Generates the final video from processed scenes
    */
   async generateVideo(scenes: Scene[], project: Project): Promise<Blob> {
-    const { setProcessing, setProgress, setError } = useProjectStore.getState();
-    
     try {
-      setProcessing(true);
-      setProgress({
-        stage: 'video-processing',
-        progress: 0,
-        message: 'Starting video generation...'
+      console.log('[ProjectService] Generating video from scenes');
+      
+      // Sort scenes by order
+      const sortedScenes = [...scenes].sort((a, b) => a.order - b.order);
+      
+      // Create a canvas for rendering
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) {
+        throw new Error('Failed to get canvas context');
+      }
+      
+      // Set canvas dimensions based on project format
+      const isReel = project.videoFormat === 'reel';
+      canvas.width = isReel ? 1080 : 1920;
+      canvas.height = isReel ? 1920 : 1080;
+      
+      // Create a MediaRecorder to capture the canvas
+      const stream = canvas.captureStream(30); // 30 FPS
+      
+      // Create an audio context for mixing audio
+      const audioContext = new AudioContext();
+      const audioDestination = audioContext.createMediaStreamDestination();
+      
+      // Add the audio destination to the stream tracks
+      const combinedStream = new MediaStream([
+        ...stream.getVideoTracks(),
+        ...audioDestination.stream.getAudioTracks()
+      ]);
+      
+      const mediaRecorder = new MediaRecorder(combinedStream, {
+        mimeType: 'video/webm;codecs=vp9',
+        videoBitsPerSecond: 5000000 // 5 Mbps
       });
-
-      // Load all scene files
-      const processedScenes = await Promise.all(scenes.map(async (scene) => {
-        if (!scene.audioPath || !scene.imagePath) {
-          throw new Error(`Missing audio or image for scene ${scene.order}`);
+      
+      const chunks: Blob[] = [];
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
         }
-
-        const audio = await this.fileSystem.readFile(scene.audioPath, 'audio');
-        const image = await this.fileSystem.readFile(scene.imagePath, 'image');
-
-        return {
-          ...scene,
-          audio,
-          image: URL.createObjectURL(image)
+      };
+      
+      // Create a promise that resolves when recording is complete
+      const recordingPromise = new Promise<Blob>((resolve) => {
+        mediaRecorder.onstop = () => {
+          const videoBlob = new Blob(chunks, { type: 'video/webm' });
+          resolve(videoBlob);
         };
-      }));
-
-      // Pass the project to the video processor
-      const video = await this.videoProcessor.processVideo(processedScenes, project);
-
-      // Save the final video
-      const videoPath = await this.fileSystem.saveFile(video, `${project.id}-final.mp4`, 'video');
-
-      setProgress({
-        stage: 'video-processing',
-        progress: 1,
-        message: 'Video generation complete'
       });
-
-      return video;
+      
+      // Start recording
+      mediaRecorder.start();
+      
+      // Process each scene
+      for (const scene of sortedScenes) {
+        if (!scene.imagePath || !scene.audioPath) {
+          console.warn(`[ProjectService] Scene ${scene.id} is missing image or audio, skipping`);
+          continue;
+        }
+        
+        // Load image
+        const image = await this.loadImage(scene.imagePath);
+        
+        // Load audio
+        const audio = await this.loadAudio(scene.audioPath);
+        
+        // Get audio duration
+        const audioDuration = audio.duration;
+        
+        // Draw image on canvas
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Calculate image position to center it
+        const aspectRatio = image.width / image.height;
+        let drawWidth, drawHeight, drawX, drawY;
+        
+        if (isReel) {
+          // For vertical video (9:16)
+          if (aspectRatio > 1) {
+            // Landscape image in vertical video
+            drawHeight = canvas.height;
+            drawWidth = drawHeight * aspectRatio;
+            drawX = (canvas.width - drawWidth) / 2;
+            drawY = 0;
+          } else {
+            // Portrait image in vertical video
+            drawWidth = canvas.width;
+            drawHeight = drawWidth / aspectRatio;
+            drawX = 0;
+            drawY = (canvas.height - drawHeight) / 2;
+          }
+        } else {
+          // For landscape video (16:9)
+          if (aspectRatio > 16/9) {
+            // Wider image in landscape video
+            drawWidth = canvas.width;
+            drawHeight = drawWidth / aspectRatio;
+            drawX = 0;
+            drawY = (canvas.height - drawHeight) / 2;
+          } else {
+            // Taller image in landscape video
+            drawHeight = canvas.height;
+            drawWidth = drawHeight * aspectRatio;
+            drawX = (canvas.width - drawWidth) / 2;
+            drawY = 0;
+          }
+        }
+        
+        ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+        
+        // Connect audio to the media stream
+        const audioSource = audioContext.createMediaElementSource(audio);
+        audioSource.connect(audioDestination);
+        
+        // Add subtitles if available
+        if (scene.subtitles?.segments?.length) {
+          // Play audio and render subtitles
+          await this.renderSceneWithSubtitles(audio, scene.subtitles.segments, ctx, canvas, audioDuration);
+        } else {
+          // Just play audio without subtitles
+          await this.playAudioAndWait(audio, audioDuration);
+        }
+        
+        // Disconnect audio source after playing
+        audioSource.disconnect();
+      }
+      
+      // Stop recording
+      mediaRecorder.stop();
+      
+      // Wait for recording to complete
+      return await recordingPromise;
     } catch (error: any) {
-      setError({
-        stage: 'video-processing',
-        message: error.message,
-        details: error,
-        timestamp: new Date(),
+      console.error('[ProjectService] Video generation error:', error);
+      throw new ProcessingError({
+        stage: 'video-generation',
+        message: `Failed to generate video: ${error.message}`,
+        timestamp: new Date()
       });
-      throw error;
-    } finally {
-      setProcessing(false);
     }
+  }
+
+  /**
+   * Load an image from the file system
+   */
+  private async loadImage(imagePath: string): Promise<HTMLImageElement> {
+    try {
+      const imageBlob = await this.fileSystem.readFile(imagePath, 'image');
+      const imageUrl = URL.createObjectURL(imageBlob);
+      
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          resolve(img);
+        };
+        img.onerror = () => {
+          reject(new Error('Failed to load image'));
+        };
+        img.src = imageUrl;
+      });
+    } catch (error: any) {
+      console.error('[ProjectService] Error loading image:', error);
+      throw new ProcessingError({
+        stage: 'image-loading',
+        message: `Failed to load image: ${error.message}`,
+        timestamp: new Date()
+      });
+    }
+  }
+
+  /**
+   * Load an audio file from the file system
+   */
+  private async loadAudio(audioPath: string): Promise<HTMLAudioElement> {
+    try {
+      const audioBlob = await this.fileSystem.readFile(audioPath, 'audio');
+      const audioUrl = URL.createObjectURL(audioBlob);
+      
+      return new Promise((resolve, reject) => {
+        const audio = new Audio();
+        audio.oncanplaythrough = () => {
+          resolve(audio);
+        };
+        audio.onerror = () => {
+          reject(new Error('Failed to load audio'));
+        };
+        audio.src = audioUrl;
+      });
+    } catch (error: any) {
+      console.error('[ProjectService] Error loading audio:', error);
+      throw new ProcessingError({
+        stage: 'audio-loading',
+        message: `Failed to load audio: ${error.message}`,
+        timestamp: new Date()
+      });
+    }
+  }
+
+  /**
+   * Play audio and wait for it to complete
+   */
+  private async playAudioAndWait(audio: HTMLAudioElement, duration: number): Promise<void> {
+    return new Promise((resolve) => {
+      const startTime = Date.now();
+      
+      // Start playing audio
+      audio.play().catch(err => console.error('Error playing audio:', err));
+      
+      // Function to check if audio has finished
+      const checkAudioProgress = () => {
+        const elapsed = (Date.now() - startTime) / 1000;
+        
+        if (elapsed >= duration) {
+          audio.pause();
+          audio.currentTime = 0;
+          resolve();
+        } else {
+          requestAnimationFrame(checkAudioProgress);
+        }
+      };
+      
+      requestAnimationFrame(checkAudioProgress);
+    });
+  }
+
+  /**
+   * Render a scene with subtitles
+   */
+  private async renderSceneWithSubtitles(
+    audio: HTMLAudioElement, 
+    subtitles: { id: number; start: number; end: number; text: string }[],
+    ctx: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    duration: number
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      const startTime = Date.now();
+      let currentTime = 0;
+      let animationFrameId: number;
+      
+      // Start playing audio
+      audio.play().catch(err => console.error('Error playing audio:', err));
+      
+      // Render function for animation
+      const render = () => {
+        // Calculate current time in seconds
+        currentTime = (Date.now() - startTime) / 1000;
+        
+        // Find current subtitle
+        const currentSubtitle = subtitles.find(
+          subtitle => currentTime >= subtitle.start && currentTime <= subtitle.end
+        );
+        
+        // Clear subtitle area
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(0, canvas.height - 150, canvas.width, 150);
+        
+        // Draw subtitle if available
+        if (currentSubtitle) {
+          // Calculate progress through the current subtitle (0 to 1)
+          const subtitleDuration = currentSubtitle.end - currentSubtitle.start;
+          const subtitleProgress = (currentTime - currentSubtitle.start) / subtitleDuration;
+          
+          // Split text into words
+          const words = currentSubtitle.text.split(/\s+/);
+          
+          // Determine how many words should be highlighted based on progress
+          const highlightedWordCount = Math.ceil(words.length * subtitleProgress);
+          
+          // Style for subtitles
+          ctx.font = '36px Inter, system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          
+          // Calculate total width of text
+          const totalText = words.join(' ');
+          const totalWidth = ctx.measureText(totalText).width;
+          
+          // Calculate starting position
+          let xPos = (canvas.width - totalWidth) / 2;
+          const yPos = canvas.height - 80;
+          
+          // Draw each word
+          words.forEach((word, index) => {
+            const wordWidth = ctx.measureText(word).width;
+            
+            // Highlighted words in red, others in white
+            if (index < highlightedWordCount) {
+              ctx.fillStyle = '#FF5C5C'; // TikTok-style highlight color
+              ctx.font = 'bold 36px Inter, system-ui, sans-serif';
+            } else {
+              ctx.fillStyle = '#FFFFFF';
+              ctx.font = '36px Inter, system-ui, sans-serif';
+            }
+            
+            // Draw word
+            ctx.fillText(word, xPos + wordWidth / 2, yPos);
+            
+            // Move position for next word
+            xPos += wordWidth + ctx.measureText(' ').width;
+          });
+        }
+        
+        // Check if we should continue animation
+        if (currentTime < duration) {
+          animationFrameId = requestAnimationFrame(render);
+        } else {
+          // Stop audio and animation
+          audio.pause();
+          audio.currentTime = 0;
+          cancelAnimationFrame(animationFrameId);
+          resolve();
+        }
+      };
+      
+      // Start animation
+      animationFrameId = requestAnimationFrame(render);
+    });
   }
 
   /**
