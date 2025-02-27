@@ -4,32 +4,44 @@ import React, { useEffect, useRef, useState } from 'react';
 import { StylizedSubtitles } from './StylizedSubtitles';
 import { SubtitleSegment, transcribeAudio } from '@/lib/services/whisper';
 
-interface VideoPlayerWithSubtitlesProps {
+export interface VideoPlayerWithSubtitlesProps {
   videoSrc: string;
   audioSrc?: string;
-  subtitles?: SubtitleSegment[];
+  subtitles?: Array<{
+    id: number;
+    start: number;
+    end: number;
+    text: string;
+    words?: Array<{
+      word: string;
+      start: number;
+      end: number;
+    }>;
+  }>;
   autoGenerateSubtitles?: boolean;
   subtitleStyle?: 'tiktok' | 'minimal' | 'caption';
   subtitlePosition?: 'top' | 'center' | 'bottom';
   width?: string;
   height?: string;
   onSubtitlesGenerated?: (subtitles: SubtitleSegment[]) => void;
+  onError?: (error: Error) => void;
 }
 
 export function VideoPlayerWithSubtitles({
   videoSrc,
   audioSrc,
-  subtitles: initialSubtitles,
+  subtitles: initialSubtitles = [],
   autoGenerateSubtitles = false,
   subtitleStyle = 'tiktok',
   subtitlePosition = 'bottom',
   width = '100%',
   height = 'auto',
-  onSubtitlesGenerated
+  onSubtitlesGenerated,
+  onError
 }: VideoPlayerWithSubtitlesProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
-  const [subtitles, setSubtitles] = useState<SubtitleSegment[]>(initialSubtitles || []);
+  const [subtitles, setSubtitles] = useState(initialSubtitles);
   const [isGeneratingSubtitles, setIsGeneratingSubtitles] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,7 +62,7 @@ export function VideoPlayerWithSubtitles({
 
   // Generate subtitles if needed
   useEffect(() => {
-    if (initialSubtitles?.length || !autoGenerateSubtitles || isGeneratingSubtitles) {
+    if (subtitles?.length || !autoGenerateSubtitles || isGeneratingSubtitles) {
       return;
     }
 
@@ -92,13 +104,32 @@ export function VideoPlayerWithSubtitles({
       } catch (err: any) {
         console.error('Failed to generate subtitles:', err);
         setError(`Failed to generate subtitles: ${err.message}`);
+        if (onError) {
+          onError(err);
+        }
       } finally {
         setIsGeneratingSubtitles(false);
       }
     };
 
     generateSubtitles();
-  }, [autoGenerateSubtitles, initialSubtitles, audioSrc, videoSrc, isGeneratingSubtitles, onSubtitlesGenerated]);
+  }, [autoGenerateSubtitles, subtitles, audioSrc, videoSrc, isGeneratingSubtitles, onSubtitlesGenerated, onError]);
+
+  // Handle errors
+  useEffect(() => {
+    const handleError = (error: Error) => {
+      console.error('[VideoPlayer] Error:', error);
+      if (onError) {
+        onError(error);
+      }
+    };
+
+    if (videoRef.current) {
+      videoRef.current.onerror = () => {
+        handleError(new Error('Video playback error'));
+      };
+    }
+  }, [onError]);
 
   return (
     <div className="relative" style={{ width }}>
@@ -124,7 +155,15 @@ export function VideoPlayerWithSubtitles({
           controls
           style={{ width: '100%', height }}
           className="rounded-lg"
-        />
+          onTimeUpdate={() => {
+            if (videoRef.current) {
+              setCurrentTime(videoRef.current.currentTime);
+            }
+          }}
+        >
+          {audioSrc && <source src={audioSrc} type="audio/mpeg" />}
+          Your browser does not support the video tag.
+        </video>
         
         {subtitles.length > 0 && (
           <StylizedSubtitles

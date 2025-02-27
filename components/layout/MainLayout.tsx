@@ -3,8 +3,16 @@ import { useProcessingState } from '@/lib/store';
 import { Progress } from '../ui/Progress';
 import { Toast } from '../ui/Toast';
 import { Settings } from '../Settings';
-import { Settings as SettingsIcon } from 'lucide-react';
-import * as Dialog from '@radix-ui/react-dialog';
+import { Settings as SettingsIcon, Menu } from 'lucide-react';
+import { Button } from '../ui/button';
+import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
+import { Separator } from '../ui/separator';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../ui/dropdown-menu';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -15,68 +23,71 @@ export function MainLayout({ children }: MainLayoutProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
       {/* Header */}
       <header className="sticky top-0 z-50 w-full border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/60">
-        <div className="container flex h-14 items-center">
-          <div className="mr-4 flex">
-            <a className="mr-6 flex items-center space-x-2" href="/">
-              <span className="font-bold">YouTube Video Generator</span>
+        <div className="container flex h-16 items-center">
+          <div className="flex items-center space-x-4">
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="md:hidden">
+                  <Menu className="h-5 w-5" />
+                  <span className="sr-only">Toggle menu</span>
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-[240px] sm:w-[280px]">
+                <nav className="flex flex-col space-y-4">
+                  <a href="/" className="flex items-center space-x-2 font-bold">
+                    <span>YouTube Video Generator</span>
+                  </a>
+                  <Separator />
+                  {/* Add your navigation items here */}
+                </nav>
+              </SheetContent>
+            </Sheet>
+            <a href="/" className="flex items-center space-x-2">
+              <span className="hidden font-bold sm:inline-block">YouTube Video Generator</span>
+              <span className="font-bold sm:hidden">YVG</span>
             </a>
           </div>
-          <div className="flex flex-1 items-center space-x-2 justify-end">
+          <div className="flex flex-1 items-center justify-end space-x-4">
             {isProcessing && progress && (
               <div className="w-[200px]">
-                <Progress value={progress.progress * 100} />
+                <Progress value={progress.progress * 100} className="h-2" />
               </div>
             )}
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-2 hover:bg-gray-100 rounded-lg"
-              title="Settings"
-            >
-              <SettingsIcon className="h-5 w-5" />
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-9 w-9">
+                  <SettingsIcon className="h-5 w-5" />
+                  <span className="sr-only">Settings</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setIsSettingsOpen(true)}>
+                  Settings
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto py-6">
+      <main className="container mx-auto py-8">
         <div className="flex min-h-[calc(100vh-4rem)] flex-col gap-8 pb-8">
           {children}
         </div>
       </main>
 
       {/* Settings Dialog */}
-      <Dialog.Root open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/50" />
-          <Dialog.Content className="fixed top-[50%] left-[50%] max-h-[85vh] w-[90vw] max-w-[500px] translate-x-[-50%] translate-y-[-50%] overflow-y-auto rounded-lg bg-white shadow-lg focus:outline-none">
+      <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+        <SheetContent side="right" className="w-[90vw] sm:max-w-[540px]">
+          <div className="h-full overflow-y-auto py-6 px-4">
             <Settings />
-            <button
-              onClick={() => setIsSettingsOpen(false)}
-              className="absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-lg"
-            >
-              <span className="sr-only">Close</span>
-              <svg
-                className="h-5 w-5"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Toast for errors */}
       <Toast />

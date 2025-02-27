@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, FormEvent } from 'react';
 import { useProjectActions, useProcessingState, useScenes, useCurrentProject } from '@/lib/store';
 import { ProjectService } from '@/lib/services/project';
 import { getOrCreateTranscription } from '@/lib/services/youtube';
@@ -14,6 +14,32 @@ import { transcribeAudio, generateVTT, SubtitleSegment } from '@/lib/services/wh
 import { useSettingsStore } from '@/lib/store/settings';
 import { Settings } from '@/components/Settings';
 import { VideoPlayerWithSubtitles } from '@/components/VideoPlayerWithSubtitles';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Separator } from '@/components/ui/separator';
+import { 
+  Video, 
+  Image as ImageIcon, 
+  Mic, 
+  Subtitles, 
+  Trash2, 
+  RefreshCw,
+  Youtube,
+  Loader2
+} from 'lucide-react';
+
+interface VideoPlayerWithSubtitlesProps {
+  videoUrl: string;
+  posterUrl?: string;
+}
+
+interface ScenePreviewProps {
+  scene: Scene;
+  onDelete: (id: string) => void;
+  index: number;
+}
 
 export function VideoProcessor() {
   const [url, setUrl] = useState('');
@@ -34,6 +60,10 @@ export function VideoProcessor() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
   const [posterImageUrl, setPosterImageUrl] = useState<string | null>(null);
+  const [videoGenerationProgress, setVideoGenerationProgress] = useState<{
+    stage: 'preparing' | 'processing' | 'finalizing';
+    progress: number;
+  } | null>(null);
 
   // Initialize FileSystemService only on the client side
   useEffect(() => {
@@ -123,7 +153,7 @@ export function VideoProcessor() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!url) return;
 
@@ -464,11 +494,34 @@ export function VideoProcessor() {
       }
 
       setIsGeneratingVideo(true);
+      setVideoGenerationProgress({ stage: 'preparing', progress: 0 });
       console.log('[VideoProcessor] Starting video generation...');
 
+      // Simulate progress updates for different stages
+      const updateProgress = (stage: 'preparing' | 'processing' | 'finalizing', progress: number) => {
+        setVideoGenerationProgress({ stage, progress });
+      };
+
+      // Preparing stage
+      updateProgress('preparing', 0);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      updateProgress('preparing', 100);
+
+      // Processing stage
+      updateProgress('processing', 0);
+      const totalScenes = scenes.length;
+      for (let i = 0; i < totalScenes; i++) {
+        await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
+        updateProgress('processing', ((i + 1) / totalScenes) * 100);
+      }
+
+      // Finalizing stage
+      updateProgress('finalizing', 0);
+      
       // Generate the video
       const video = await projectService.generateVideo(scenes, currentProject);
       
+      updateProgress('finalizing', 100);
       console.log('[VideoProcessor] Video generation complete, creating download link');
       
       // Create video URL for preview
@@ -482,7 +535,7 @@ export function VideoProcessor() {
       const a = document.createElement('a');
       a.href = videoUrl;
       
-      // Generate a safe filename, handling the case where title might be undefined
+      // Generate a safe filename
       const projectTitle = currentProject.title || 'generated-video';
       const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
       const timestamp = new Date().toISOString().split('T')[0];
@@ -505,6 +558,7 @@ export function VideoProcessor() {
       });
     } finally {
       setIsGeneratingVideo(false);
+      setVideoGenerationProgress(null);
     }
   };
 
@@ -518,227 +572,204 @@ export function VideoProcessor() {
   };
 
   return (
-    <div className="w-full max-w-4xl mx-auto space-y-8">
-      <div className="space-y-4">
-        <h1 className="text-2xl font-bold text-center">
-          Generate AI Videos from YouTube Content
-        </h1>
-        <p className="text-gray-500 text-center">
-          Enter a YouTube URL to create an AI-powered video with narration and visuals
-        </p>
-        
-        {/* Settings button */}
-        <div className="flex justify-end">
-          <button
-            onClick={() => setIsSettingsOpen(true)}
-            className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 flex items-center gap-2"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-            </svg>
-            Settings
-          </button>
-        </div>
-      </div>
-
-      {/* Settings Modal */}
-      {isSettingsOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-semibold">Settings</h2>
-              <button
-                onClick={() => setIsSettingsOpen(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <Settings />
-          </div>
-        </div>
-      )}
-
-      {/* Video Preview */}
-      {generatedVideoUrl && (
-        <div className="bg-gray-100 p-6 rounded-lg shadow-md">
-          <h2 className="text-xl font-semibold mb-4">Generated Video Preview</h2>
-          <div className="aspect-video bg-black rounded-lg overflow-hidden">
-            <video 
-              src={generatedVideoUrl} 
-              controls 
-              className="w-full h-full"
-              poster={posterImageUrl || undefined}
-            />
-          </div>
-          <div className="mt-4 flex justify-between">
-            <button
-              onClick={() => {
-                const a = document.createElement('a');
-                a.href = generatedVideoUrl;
-                const projectTitle = currentProject?.title || 'generated-video';
-                const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-                const timestamp = new Date().toISOString().split('T')[0];
-                a.download = `${safeTitle}-${timestamp}.webm`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-              }}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-            >
-              Download Video
-            </button>
-            <button
-              onClick={() => {
-                if (generatedVideoUrl) {
-                  URL.revokeObjectURL(generatedVideoUrl);
-                  setGeneratedVideoUrl(null);
-                }
-              }}
-              className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
-            >
-              Close Preview
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Cache info and clear button */}
-      <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
-        <div>
-          {isLoadingCacheSize ? (
-            <p className="text-sm text-gray-500">Loading cache info...</p>
-          ) : cacheSize ? (
-            <div className="text-sm">
-              <p className="font-medium">Cache usage:</p>
-              <p>Total: {(cacheSize.total / (1024 * 1024)).toFixed(2)} MB</p>
-              <p>Audio: {(cacheSize.audio / (1024 * 1024)).toFixed(2)} MB</p>
-              <p>Images: {(cacheSize.image / (1024 * 1024)).toFixed(2)} MB</p>
-              <p>Videos: {(cacheSize.video / (1024 * 1024)).toFixed(2)} MB</p>
-            </div>
-          ) : (
-            <p className="text-sm text-gray-500">Cache info not available</p>
-          )}
-        </div>
-        <button
-          onClick={handleClearCache}
-          disabled={isClearing || !cacheSize || cacheSize.total === 0}
-          className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isClearing ? 'Clearing...' : 'Clear Cache'}
-        </button>
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="flex gap-2">
-          <input
-            type="url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="Enter YouTube URL"
-            className="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={isProcessing}
-          />
-          <select
-            value={videoFormat}
-            onChange={(e) => setVideoFormat(e.target.value as 'landscape' | 'reel')}
-            className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={isProcessing}
-          >
-            <option value="landscape">Landscape (16:9)</option>
-            <option value="reel">Vertical Reel (9:16)</option>
-          </select>
-          <button
-            type="submit"
-            disabled={isProcessing || !url}
-            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isProcessing ? 'Processing...' : 'Generate Scenes'}
-          </button>
-        </div>
-      </form>
-
-      {isProcessing && progress && (
-        <div className="space-y-2">
-          <p className="text-sm text-gray-500">{progress.message}</p>
-          <div className="h-1 w-full bg-gray-200 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-blue-500 transition-all duration-300"
-              style={{ width: `${progress.progress * 100}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {currentProject && scenes.length > 0 && !isProcessing && (
-        <div className="space-y-6">
-          <div className="flex justify-between items-center">
-            <h2 className="text-lg font-semibold">Current Project</h2>
-            <div className="flex gap-2">
-              <button
-                onClick={handleGenerateAllAudio}
-                disabled={isGeneratingAllAudio || scenes.every(scene => scene.status?.audioGenerated)}
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isGeneratingAllAudio ? 'Generating...' : 'Generate All Audio'}
-              </button>
-              <button
-                onClick={handleGenerateAllImages}
-                disabled={isGeneratingAllImages || scenes.every(scene => scene.status?.imageGenerated)}
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isGeneratingAllImages ? 'Generating...' : 'Generate All Images'}
-              </button>
-              <button
-                onClick={handleGenerateAllSubtitles}
-                disabled={
-                  isGeneratingAllSubtitles || 
-                  scenes.every(scene => scene.status?.subtitlesGenerated) ||
-                  !scenes.some(scene => scene.audioPath)
-                }
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isGeneratingAllSubtitles ? 'Generating...' : 'Generate All Subtitles'}
-              </button>
-              <div className="flex justify-center mt-6">
-                <button
-                  onClick={handleGenerateVideo}
-                  disabled={isGeneratingVideo || !scenes || scenes.length === 0}
-                  className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isGeneratingVideo ? (
-                    <span className="flex items-center">
-                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      Generating Video...
-                    </span>
-                  ) : (
-                    'Generate Final Video'
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="grid gap-6">
-            {scenes.map((scene) => {
-              console.log('[VideoProcessor] Rendering scene:', scene);
-              return (
-                <ScenePreview 
-                  key={scene.id} 
-                  scene={scene} 
-                  onDelete={handleDeleteScene}
+    <div className="space-y-8">
+      <Card>
+        <CardHeader>
+          <CardTitle>Create New Video</CardTitle>
+          <CardDescription>Enter a YouTube URL to get started</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="flex items-center space-x-4">
+              <div className="flex-1">
+                <Input
+                  type="text"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="Enter YouTube URL"
+                  className="w-full"
+                  disabled={isProcessing}
                 />
-              );
-            })}
-          </div>
-        </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Button
+                  type="button"
+                  variant={videoFormat === 'landscape' ? 'default' : 'outline'}
+                  onClick={() => setVideoFormat('landscape')}
+                  disabled={isProcessing}
+                >
+                  Landscape
+                </Button>
+                <Button
+                  type="button"
+                  variant={videoFormat === 'reel' ? 'default' : 'outline'}
+                  onClick={() => setVideoFormat('reel')}
+                  disabled={isProcessing}
+                >
+                  Reel
+                </Button>
+              </div>
+              <Button type="submit" disabled={isProcessing || !url}>
+                <Youtube className="mr-2 h-4 w-4" />
+                Process
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      {currentProject ? (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle>Project: {currentProject.title}</CardTitle>
+              <CardDescription>Manage your video scenes and assets</CardDescription>
+            </div>
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                onClick={handleGenerateAllAudio}
+                disabled={isGeneratingAllAudio || isProcessing || isGeneratingVideo}
+              >
+                <Mic className="mr-2 h-4 w-4" />
+                Generate All Audio
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleGenerateAllImages}
+                disabled={isGeneratingAllImages || isProcessing || isGeneratingVideo}
+              >
+                <ImageIcon className="mr-2 h-4 w-4" />
+                Generate All Images
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleGenerateAllSubtitles}
+                disabled={isGeneratingAllSubtitles || isProcessing || isGeneratingVideo}
+              >
+                <Subtitles className="mr-2 h-4 w-4" />
+                Generate All Subtitles
+              </Button>
+              <Button
+                variant="default"
+                onClick={handleGenerateVideo}
+                disabled={isGeneratingVideo || isProcessing}
+                className="min-w-[160px]"
+              >
+                {isGeneratingVideo ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {videoGenerationProgress ? (
+                      `${videoGenerationProgress.stage === 'preparing' ? 'Preparing' :
+                        videoGenerationProgress.stage === 'processing' ? 'Processing' :
+                        'Finalizing'} (${Math.round(videoGenerationProgress.progress)}%)`
+                    ) : (
+                      'Generating...'
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Video className="mr-2 h-4 w-4" />
+                    Generate Video
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {videoGenerationProgress && (
+              <div className="mb-6 space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">
+                    {videoGenerationProgress.stage === 'preparing' ? 'Preparing scenes...' :
+                     videoGenerationProgress.stage === 'processing' ? 'Processing video...' :
+                     'Finalizing video...'}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {Math.round(videoGenerationProgress.progress)}%
+                  </span>
+                </div>
+                <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
+                  <div
+                    className="h-full bg-primary transition-all duration-500"
+                    style={{ width: `${videoGenerationProgress.progress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            
+            <Tabs defaultValue="scenes" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="scenes">Scenes</TabsTrigger>
+                <TabsTrigger value="preview">Preview</TabsTrigger>
+              </TabsList>
+              <TabsContent value="scenes" className="mt-4">
+                <div className="grid gap-6">
+                  {scenes.map((scene) => (
+                    <ScenePreview
+                      key={scene.id}
+                      scene={scene}
+                      onDelete={() => handleDeleteScene(scene.id)}
+                    />
+                  ))}
+                </div>
+              </TabsContent>
+              <TabsContent value="preview" className="mt-4">
+                {generatedVideoUrl && (
+                  <div className="aspect-video w-full overflow-hidden rounded-lg bg-black">
+                    <VideoPlayerWithSubtitles
+                      videoSrc={generatedVideoUrl}
+                      width="100%"
+                      height="auto"
+                    />
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
+      ) : (
+        <ProjectList />
       )}
 
-      {!currentProject && <ProjectList />}
+      <Card>
+        <CardHeader>
+          <CardTitle>Cache Management</CardTitle>
+          <CardDescription>Manage your local cache storage</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              {cacheSize && (
+                <div className="text-sm">
+                  <p>Total: {(cacheSize.total / 1024 / 1024).toFixed(2)} MB</p>
+                  <p>Audio: {(cacheSize.audio / 1024 / 1024).toFixed(2)} MB</p>
+                  <p>Images: {(cacheSize.image / 1024 / 1024).toFixed(2)} MB</p>
+                  <p>Video: {(cacheSize.video / 1024 / 1024).toFixed(2)} MB</p>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                onClick={loadCacheSize}
+                disabled={isLoadingCacheSize}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Refresh
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleClearCache}
+                disabled={isClearing || !cacheSize}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Clear Cache
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 } 

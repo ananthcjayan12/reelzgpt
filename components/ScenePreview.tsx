@@ -9,6 +9,20 @@ import { useProjectActions } from '@/lib/store';
 import { VideoPlayerWithSubtitles } from './VideoPlayerWithSubtitles';
 import { transcribeAudio } from '@/lib/services/whisper';
 import { useSettingsStore } from '@/lib/store/settings';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Separator } from '@/components/ui/separator';
+import { 
+  Mic, 
+  Image as ImageIcon, 
+  Play, 
+  Upload, 
+  Save, 
+  Trash2,
+  Subtitles
+} from 'lucide-react';
 
 interface ScenePreviewProps {
   scene: Scene;
@@ -75,6 +89,26 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
     };
   }, [scene.imagePath, scene.audioPath]);
 
+  // Update audio URL when audio is generated or uploaded
+  useEffect(() => {
+    async function loadAudio() {
+      if (scene.audioPath) {
+        try {
+          const audioBlob = await fileSystem.readFile(scene.audioPath, 'audio');
+          if (audioUrl) {
+            URL.revokeObjectURL(audioUrl); // Clean up old URL
+          }
+          const url = URL.createObjectURL(audioBlob);
+          setAudioUrl(url);
+        } catch (error) {
+          console.error('Error loading audio:', error);
+        }
+      }
+    }
+
+    loadAudio();
+  }, [scene.audioPath]); // Re-run when audioPath changes
+
   const handleGenerateAudio = async () => {
     try {
       setIsGeneratingAudio(true);
@@ -88,6 +122,13 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
       // Save audio to file system
       const filename = `scene-${scene.id}-audio.mp3`;
       const audioPath = await fileSystem.saveFile(audioBlob, filename, 'audio');
+      
+      // Create audio URL for immediate preview
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+      const newAudioUrl = URL.createObjectURL(audioBlob);
+      setAudioUrl(newAudioUrl);
       
       // Update scene with audio path
       updateScene(scene.id, { 
@@ -188,17 +229,20 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
           hasWords: Boolean(transcription.segments[0].words && transcription.segments[0].words.length > 0)
         } : 'No segments'
       });
+
+      // Process segments to ensure they have the correct format
+      const subtitleSegments = transcription.segments.map(segment => ({
+        id: segment.id,
+        start: segment.start,
+        end: segment.end,
+        text: segment.text.trim(),
+        words: segment.words || []
+      }));
       
-      // Update scene with subtitles, including word-level timestamps
+      // Update scene with subtitles
       updateScene(scene.id, { 
         subtitles: {
-          segments: transcription.segments.map(segment => ({
-            id: segment.id,
-            start: segment.start,
-            end: segment.end,
-            text: segment.text.trim(),
-            words: segment.words || [] // Include word-level timestamps if available
-          })),
+          segments: subtitleSegments,
           format: 'vtt',
           style: 'tiktok'
         },
@@ -208,12 +252,13 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
         }
       });
       
-      console.log('[ScenePreview] Generated subtitles with word-level timestamps:', 
-        transcription.segments.some(s => s.words && s.words.length > 0) ? 'Yes' : 'No');
+      console.log('[ScenePreview] Subtitles generated and saved:', {
+        segmentsCount: subtitleSegments.length,
+        hasWordTimings: subtitleSegments.some(s => s.words && s.words.length > 0)
+      });
     } catch (error: any) {
-      console.error('Error generating subtitles:', error);
+      console.error('[ScenePreview] Error generating subtitles:', error);
       
-      // Show a more user-friendly error message for API key issues
       if (error.message.includes('API key')) {
         alert('Failed to transcribe audio: Please check your OpenAI API key in settings.');
       } else {
@@ -222,9 +267,6 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
           message: error.message,
           timestamp: new Date(),
         });
-        
-        // Show a more detailed alert for debugging
-        alert(`Failed to generate subtitles: ${error.message}\nPlease check the console for more details.`);
       }
     } finally {
       setIsGeneratingSubtitles(false);
@@ -327,6 +369,13 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
       const filename = `scene-${scene.id}-audio-custom.${file.name.split('.').pop()}`;
       const audioPath = await fileSystem.saveFile(file, filename, 'audio');
       
+      // Create audio URL for immediate preview
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+      const newAudioUrl = URL.createObjectURL(file);
+      setAudioUrl(newAudioUrl);
+      
       // Update scene with audio path
       updateScene(scene.id, { 
         audioPath,
@@ -353,332 +402,238 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
     }
   };
 
-  // Button component for regenerate/edit actions
-  const ActionButton = ({ 
-    onClick, 
-    disabled = false, 
-    className = "", 
-    children 
-  }: { 
-    onClick: () => void, 
-    disabled?: boolean, 
-    className?: string, 
-    children: React.ReactNode 
-  }) => (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`px-2 py-1 text-xs rounded-md ${className}`}
-    >
-      {children}
-    </button>
-  );
+  // Clean up URLs when component unmounts
+  useEffect(() => {
+    return () => {
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+      if (imageUrl) {
+        URL.revokeObjectURL(imageUrl);
+      }
+    };
+  }, []);
 
   return (
-    <div className="border rounded-lg p-4 space-y-4 bg-white shadow-sm">
-      <div className="flex justify-between items-start">
-        <h3 className="font-medium text-lg">Scene {scene.order}</h3>
-        <button
-          onClick={() => onDelete(scene.id)}
-          className="text-red-500 hover:text-red-700"
-        >
-          Delete
-        </button>
-      </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <div className="mb-4">
-            <div className="flex justify-between items-center mb-2">
-              <h4 className="font-medium">Narration</h4>
-              <div className="flex space-x-2">
-                <ActionButton 
-                  onClick={() => setIsEditingNarration(!isEditingNarration)}
-                  className="bg-gray-200 hover:bg-gray-300 text-gray-800"
-                >
-                  {isEditingNarration ? 'Cancel' : 'Edit'}
-                </ActionButton>
-                {isEditingNarration && (
-                  <ActionButton 
-                    onClick={handleSaveNarration}
-                    className="bg-green-500 hover:bg-green-600 text-white"
-                  >
-                    Save
-                  </ActionButton>
-                )}
-                {!isEditingNarration && scene.audioPath && (
-                  <ActionButton 
-                    onClick={handleGenerateAudio}
-                    disabled={isGeneratingAudio}
-                    className="bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isGeneratingAudio ? 'Regenerating...' : 'Regenerate'}
-                  </ActionButton>
-                )}
-              </div>
-            </div>
-            {isEditingNarration ? (
-              <textarea
-                value={editedNarration}
-                onChange={(e) => setEditedNarration(e.target.value)}
-                className="w-full h-32 p-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter narration text"
-              />
-            ) : (
-              <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-md h-32 overflow-y-auto">
-                {scene.narration}
-              </p>
-            )}
-          </div>
-          
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>Scene {scene.id}</CardTitle>
+          <Button variant="destructive" size="icon" onClick={() => onDelete(scene.id)}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-4">
           <div>
-            <div className="flex justify-between items-center mb-2">
-              <h4 className="font-medium">Image Prompt</h4>
-              <div className="flex space-x-2">
-                <ActionButton 
-                  onClick={() => setIsEditingImagePrompt(!isEditingImagePrompt)}
-                  className="bg-gray-200 hover:bg-gray-300 text-gray-800"
-                >
-                  {isEditingImagePrompt ? 'Cancel' : 'Edit'}
-                </ActionButton>
-                {isEditingImagePrompt && (
-                  <ActionButton 
-                    onClick={handleSaveImagePrompt}
-                    className="bg-green-500 hover:bg-green-600 text-white"
-                  >
-                    Save
-                  </ActionButton>
-                )}
-                {!isEditingImagePrompt && scene.imagePath && (
-                  <ActionButton 
-                    onClick={handleGenerateImage}
-                    disabled={isGeneratingImage}
-                    className="bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isGeneratingImage ? 'Regenerating...' : 'Regenerate'}
-                  </ActionButton>
-                )}
-              </div>
+            <label className="text-sm font-medium">Narration</label>
+            <Textarea
+              value={editedNarration}
+              onChange={(e) => setEditedNarration(e.target.value)}
+              placeholder="Enter narration text"
+              className="mt-1"
+            />
+            <div className="flex justify-end mt-2">
+              <Button variant="outline" size="sm" onClick={handleSaveNarration}>
+                <Save className="h-4 w-4 mr-2" />
+                Save
+              </Button>
             </div>
-            {isEditingImagePrompt ? (
-              <textarea
-                value={editedImagePrompt}
-                onChange={(e) => setEditedImagePrompt(e.target.value)}
-                className="w-full h-32 p-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter image prompt"
-              />
-            ) : (
-              <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-md h-32 overflow-y-auto">
-                {scene.imagePrompt}
-              </p>
-            )}
+          </div>
+
+          <div>
+            <label className="text-sm font-medium">Image Prompt</label>
+            <Textarea
+              value={editedImagePrompt}
+              onChange={(e) => setEditedImagePrompt(e.target.value)}
+              placeholder="Enter image generation prompt"
+              className="mt-1"
+            />
+            <div className="flex justify-end mt-2">
+              <Button variant="outline" size="sm" onClick={handleSaveImagePrompt}>
+                <Save className="h-4 w-4 mr-2" />
+                Save
+              </Button>
+            </div>
           </div>
         </div>
-        
-        <div className="space-y-4">
-          {scene.imagePath ? (
-            <div>
-              <h4 className="font-medium mb-2">Generated Image</h4>
-              <div className="relative aspect-video bg-gray-100 rounded-md overflow-hidden">
-                {imageUrl ? (
-                  <img
-                    src={imageUrl}
-                    alt={`Scene ${scene.order}`}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-full">
-                    <p className="text-gray-500">Loading image...</p>
-                  </div>
-                )}
-              </div>
-              <div className="mt-2 flex justify-end space-x-2">
+
+        <Separator />
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">Audio</h3>
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleGenerateAudio}
+                  disabled={isGeneratingAudio || !scene.narration}
+                >
+                  <Mic className="h-4 w-4 mr-2" />
+                  Generate
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => audioInputRef.current?.click()}
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload
+                </Button>
                 <input
+                  ref={audioInputRef}
+                  type="file"
+                  accept="audio/*"
+                  onChange={handleUploadAudio}
+                  className="hidden"
+                />
+              </div>
+            </div>
+            {audioUrl && (
+              <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
+                <div className="p-4">
+                  <audio controls className="w-full">
+                    <source src={audioUrl} type="audio/mpeg" />
+                    Your browser does not support the audio element.
+                  </audio>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">Image</h3>
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleGenerateImage}
+                  disabled={isGeneratingImage || !editedImagePrompt}
+                >
+                  <ImageIcon className="h-4 w-4 mr-2" />
+                  Generate
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload
+                </Button>
+                <input
+                  ref={imageInputRef}
                   type="file"
                   accept="image/*"
                   onChange={handleUploadImage}
                   className="hidden"
-                  ref={imageInputRef}
                 />
-                <button
-                  onClick={() => imageInputRef.current?.click()}
-                  disabled={isUploadingImage}
-                  className="px-2 py-1 text-xs bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50"
-                >
-                  {isUploadingImage ? 'Uploading...' : 'Upload Custom'}
-                </button>
               </div>
             </div>
-          ) : (
-            <div>
-              <h4 className="font-medium mb-2">Image</h4>
-              <div className="flex flex-col justify-center items-center h-40 bg-gray-100 rounded-md p-4">
-                <div className="flex space-x-2 mb-2">
-                  <button
-                    onClick={handleGenerateImage}
-                    disabled={isGeneratingImage}
-                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isGeneratingImage ? 'Generating...' : 'Generate Image'}
-                  </button>
-                  <span className="text-gray-500 mx-2">or</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleUploadImage}
-                    className="hidden"
-                    ref={imageInputRef}
-                  />
-                  <button
-                    onClick={() => imageInputRef.current?.click()}
-                    disabled={isUploadingImage}
-                    className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50"
-                  >
-                    {isUploadingImage ? 'Uploading...' : 'Upload Image'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-          
-          <div>
-            <h4 className="font-medium mb-2">Audio</h4>
-            {scene.audioPath ? (
-              <div className="space-y-2">
-                {audioUrl ? (
-                  <audio
-                    src={audioUrl}
-                    controls
-                    className="w-full"
-                  />
-                ) : (
-                  <div className="h-10 bg-gray-100 rounded-md flex items-center justify-center">
-                    <p className="text-gray-500">Loading audio...</p>
-                  </div>
-                )}
-                <div className="flex justify-end space-x-2">
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    onChange={handleUploadAudio}
-                    className="hidden"
-                    ref={audioInputRef}
-                  />
-                  <button
-                    onClick={() => audioInputRef.current?.click()}
-                    disabled={isUploadingAudio}
-                    className="px-2 py-1 text-xs bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50"
-                  >
-                    {isUploadingAudio ? 'Uploading...' : 'Upload Custom'}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex justify-center items-center h-12 bg-gray-100 rounded-md">
-                <div className="flex space-x-2">
-                  <button
-                    onClick={handleGenerateAudio}
-                    disabled={isGeneratingAudio}
-                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isGeneratingAudio ? 'Generating...' : 'Generate Audio'}
-                  </button>
-                  <span className="text-gray-500 mx-2">or</span>
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    onChange={handleUploadAudio}
-                    className="hidden"
-                    ref={audioInputRef}
-                  />
-                  <button
-                    onClick={() => audioInputRef.current?.click()}
-                    disabled={isUploadingAudio}
-                    className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50"
-                  >
-                    {isUploadingAudio ? 'Uploading...' : 'Upload Audio'}
-                  </button>
-                </div>
+            {scene.imagePath && (
+              <div className="rounded-lg border bg-card text-card-foreground shadow-sm overflow-hidden">
+                <img
+                  src={imageUrl || ''}
+                  alt="Scene"
+                  className="w-full h-48 object-cover"
+                />
               </div>
             )}
           </div>
-          
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <h4 className="font-medium">Subtitles</h4>
-              {scene.subtitles && scene.subtitles.segments && scene.subtitles.segments.length > 0 && (
-                <ActionButton 
-                  onClick={handleGenerateSubtitles}
-                  disabled={isGeneratingSubtitles || !scene.audioPath}
-                  className="bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isGeneratingSubtitles ? 'Regenerating...' : 'Regenerate'}
-                </ActionButton>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium">Preview</h3>
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleGenerateSubtitles}
+                disabled={isGeneratingSubtitles || !scene.audioPath}
+              >
+                <Subtitles className="h-4 w-4 mr-2" />
+                {isGeneratingSubtitles ? 'Generating...' : 'Generate Subtitles'}
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handlePlayPreview}
+                disabled={!scene.audioPath || !scene.imagePath}
+              >
+                <Play className="h-4 w-4 mr-2" />
+                Play
+              </Button>
+            </div>
+          </div>
+
+          {isPlaying && scene.audioPath && scene.imagePath && (
+            <div className="space-y-4">
+              <div className="rounded-lg overflow-hidden bg-black aspect-video">
+                <VideoPlayerWithSubtitles
+                  videoSrc={imageUrl || ''}
+                  audioSrc={audioUrl || ''}
+                  subtitles={scene.subtitles?.segments || []}
+                  width="100%"
+                  height="auto"
+                  onError={(error: Error) => {
+                    console.error('[ScenePreview] Video player error:', error);
+                    setError({
+                      stage: 'preview-playback',
+                      message: 'Error playing preview: ' + error.message,
+                      timestamp: new Date(),
+                    });
+                  }}
+                />
+              </div>
+
+              {/* Subtitle timeline preview */}
+              {scene.subtitles?.segments && scene.subtitles.segments.length > 0 && (
+                <div className="bg-muted rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-medium">Subtitles Timeline</h4>
+                    <span className="text-sm text-muted-foreground">
+                      {scene.subtitles.segments.length} segments
+                    </span>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-2">
+                    {scene.subtitles.segments.map((segment, index) => (
+                      <div 
+                        key={segment.id || index} 
+                        className="text-sm p-2 rounded bg-background hover:bg-accent transition-colors"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-muted-foreground font-mono">
+                            {Math.floor(segment.start)}s - {Math.floor(segment.end)}s
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Duration: {Math.round(segment.end - segment.start)}s
+                          </span>
+                        </div>
+                        <p className="mt-1">{segment.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
-            {scene.subtitles && scene.subtitles.segments && scene.subtitles.segments.length > 0 ? (
-              <div className="text-sm text-gray-700 bg-gray-50 p-3 rounded-md max-h-32 overflow-y-auto">
-                <p className="text-xs text-gray-500 mb-2">
-                  {scene.subtitles.segments.length} subtitle segments generated
-                </p>
-                {scene.subtitles.segments.slice(0, 3).map((segment, index) => (
-                  <div key={index} className="mb-2 pb-2 border-b border-gray-200 last:border-0">
-                    <div className="text-xs text-gray-500">
-                      {Math.floor(segment.start / 60)}:{(segment.start % 60).toFixed(2).padStart(5, '0')} - 
-                      {Math.floor(segment.end / 60)}:{(segment.end % 60).toFixed(2).padStart(5, '0')}
-                    </div>
-                    <div>{segment.text}</div>
-                  </div>
-                ))}
-                {scene.subtitles.segments.length > 3 && (
-                  <p className="text-xs text-gray-500 mt-2">
-                    ... and {scene.subtitles.segments.length - 3} more segments
-                  </p>
-                )}
-              </div>
-            ) : scene.audioPath ? (
-              <div className="flex justify-center items-center h-12 bg-gray-100 rounded-md">
-                <button
-                  onClick={handleGenerateSubtitles}
-                  disabled={isGeneratingSubtitles || !scene.audioPath}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isGeneratingSubtitles ? 'Generating...' : 'Generate Subtitles'}
-                </button>
-              </div>
-            ) : (
-              <div className="flex justify-center items-center h-12 bg-gray-100 rounded-md">
-                <p className="text-sm text-gray-500">Generate audio first</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-      
-      {scene.audioPath && scene.imagePath && (
-        <div className="mt-4">
-          <h4 className="font-medium mb-2">Preview</h4>
-          {isPlaying ? (
-            <VideoPlayerWithSubtitles
-              videoSrc={imageUrl || ''}
-              audioSrc={audioUrl || ''}
-              subtitles={scene.subtitles?.segments}
-              subtitleStyle="tiktok"
-              width="100%"
-              height="240px"
-            />
-          ) : (
-            <div className="flex justify-center items-center h-40 bg-gray-100 rounded-md">
-              <button
-                onClick={handlePlayPreview}
-                className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600"
-              >
-                Play Preview
-              </button>
+          )}
+
+          {/* Show subtitle status when not playing */}
+          {!isPlaying && scene.subtitles?.segments && (
+            <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+              <Subtitles className="h-4 w-4" />
+              <span>{scene.subtitles.segments.length} subtitle segments generated</span>
             </div>
           )}
         </div>
-      )}
-    </div>
+      </CardContent>
+    </Card>
   );
 } 
