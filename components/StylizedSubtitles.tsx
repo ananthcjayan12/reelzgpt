@@ -29,7 +29,8 @@ export function StylizedSubtitles({
   maxWidth = '90%'
 }: StylizedSubtitlesProps) {
   const [activeSubtitle, setActiveSubtitle] = useState<SubtitleSegment | null>(null);
-  const [words, setWords] = useState<{ text: string; highlighted: boolean }[]>([]);
+  const [displayWords, setDisplayWords] = useState<{ text: string; highlighted: boolean }[]>([]);
+  const [progress, setProgress] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Find the active subtitle based on current time
@@ -46,27 +47,49 @@ export function StylizedSubtitles({
   // Split subtitle into words and determine which ones to highlight
   useEffect(() => {
     if (!activeSubtitle) {
-      setWords([]);
+      setDisplayWords([]);
+      setProgress(0);
       return;
     }
 
     // Calculate progress through the current subtitle (0 to 1)
     const subtitleDuration = activeSubtitle.end - activeSubtitle.start;
-    const subtitleProgress = (currentTime - activeSubtitle.start) / subtitleDuration;
+    const subtitleProgress = Math.min(1, Math.max(0, (currentTime - activeSubtitle.start) / subtitleDuration));
+    setProgress(subtitleProgress);
     
     // Split text into words
     const allWords = activeSubtitle.text.split(/\s+/);
     
-    // Determine how many words should be highlighted based on progress
-    const highlightedWordCount = Math.ceil(allWords.length * subtitleProgress);
+    // TikTok-style: Show only a few words at a time
+    // Calculate which word should be the focus based on progress
+    const focusWordIndex = Math.min(Math.floor(subtitleProgress * allWords.length), allWords.length - 1);
     
-    // Create array of words with highlight status
-    const processedWords = allWords.map((word, index) => ({
-      text: word,
-      highlighted: index < highlightedWordCount
-    }));
+    // Get the words to display (current word and next word if available)
+    const wordsToDisplay = [];
     
-    setWords(processedWords);
+    // Add up to 2 words before the focus word
+    for (let i = Math.max(0, focusWordIndex - 2); i < focusWordIndex; i++) {
+      wordsToDisplay.push({
+        text: allWords[i],
+        highlighted: false
+      });
+    }
+    
+    // Add the focus word
+    wordsToDisplay.push({
+      text: allWords[focusWordIndex],
+      highlighted: true
+    });
+    
+    // Add the next word if available
+    if (focusWordIndex + 1 < allWords.length) {
+      wordsToDisplay.push({
+        text: allWords[focusWordIndex + 1],
+        highlighted: false
+      });
+    }
+    
+    setDisplayWords(wordsToDisplay);
   }, [activeSubtitle, currentTime]);
 
   // Apply different styles based on the selected style
@@ -77,10 +100,11 @@ export function StylizedSubtitles({
       transform: 'translateX(-50%)',
       maxWidth,
       textAlign: 'center',
-      padding: '0.5rem 1rem',
+      padding: '0.75rem 1.25rem',
       borderRadius: '0.5rem',
       transition: 'all 0.2s ease-in-out',
-      opacity: activeSubtitle ? 1 : 0
+      opacity: activeSubtitle ? 1 : 0,
+      backgroundColor
     };
     
     // Position styles
@@ -91,20 +115,6 @@ export function StylizedSubtitles({
       baseStyle.transform = 'translate(-50%, -50%)';
     } else {
       baseStyle.bottom = '10%';
-    }
-    
-    // Style-specific customizations
-    if (style === 'tiktok') {
-      baseStyle.backgroundColor = backgroundColor;
-      baseStyle.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.1)';
-      baseStyle.padding = '0.75rem 1.25rem';
-    } else if (style === 'minimal') {
-      baseStyle.backgroundColor = 'transparent';
-      baseStyle.textShadow = '0 2px 4px rgba(0, 0, 0, 0.5)';
-    } else if (style === 'caption') {
-      baseStyle.backgroundColor = 'transparent';
-      baseStyle.textShadow = '0 1px 2px rgba(0, 0, 0, 0.8)';
-      baseStyle.maxWidth = '80%';
     }
     
     return baseStyle;
@@ -128,17 +138,42 @@ export function StylizedSubtitles({
     return baseStyle;
   };
 
-  if (!activeSubtitle) {
+  const getProgressBarStyle = (): React.CSSProperties => {
+    return {
+      width: '100%',
+      height: '4px',
+      backgroundColor: 'rgba(255, 255, 255, 0.3)',
+      borderRadius: '2px',
+      marginTop: '0.5rem',
+      overflow: 'hidden'
+    };
+  };
+
+  const getProgressStyle = (): React.CSSProperties => {
+    return {
+      height: '100%',
+      width: `${progress * 100}%`,
+      backgroundColor: highlightColor,
+      transition: 'width 0.1s linear'
+    };
+  };
+
+  if (!activeSubtitle || displayWords.length === 0) {
     return null;
   }
 
   return (
     <div ref={containerRef} style={getContainerStyle()}>
-      {words.map((word, index) => (
-        <span key={index} style={getWordStyle(word.highlighted)}>
-          {word.text}
-        </span>
-      ))}
+      <div>
+        {displayWords.map((word, index) => (
+          <span key={index} style={getWordStyle(word.highlighted)}>
+            {word.text}
+          </span>
+        ))}
+      </div>
+      <div style={getProgressBarStyle()}>
+        <div style={getProgressStyle()} />
+      </div>
     </div>
   );
 } 

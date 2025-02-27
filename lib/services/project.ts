@@ -413,9 +413,9 @@ export class ProjectService {
           subtitle => currentTime >= subtitle.start && currentTime <= subtitle.end
         );
         
-        // Clear subtitle area
+        // Clear subtitle area (full width, bottom 20% of the canvas)
         ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(0, canvas.height - 150, canvas.width, 150);
+        ctx.fillRect(0, canvas.height - canvas.height * 0.2, canvas.width, canvas.height * 0.2);
         
         // Draw subtitle if available
         if (currentSubtitle) {
@@ -426,41 +426,104 @@ export class ProjectService {
           // Split text into words
           const words = currentSubtitle.text.split(/\s+/);
           
-          // Determine how many words should be highlighted based on progress
-          const highlightedWordCount = Math.ceil(words.length * subtitleProgress);
+          // TikTok-style: Show only a few words at a time
+          // Calculate which word should be the focus based on progress
+          const focusWordIndex = Math.min(Math.floor(subtitleProgress * words.length), words.length - 1);
+          
+          // Get the words to display (current word and next word if available)
+          const displayWords = [];
+          
+          // Add up to 2 words before the focus word
+          for (let i = Math.max(0, focusWordIndex - 2); i < focusWordIndex; i++) {
+            displayWords.push({
+              text: words[i],
+              highlighted: false
+            });
+          }
+          
+          // Add the focus word
+          displayWords.push({
+            text: words[focusWordIndex],
+            highlighted: true
+          });
+          
+          // Add the next word if available
+          if (focusWordIndex + 1 < words.length) {
+            displayWords.push({
+              text: words[focusWordIndex + 1],
+              highlighted: false
+            });
+          }
           
           // Style for subtitles
-          ctx.font = '36px Inter, system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           
-          // Calculate total width of text
-          const totalText = words.join(' ');
-          const totalWidth = ctx.measureText(totalText).width;
+          // Calculate the total text to display
+          const displayText = displayWords.map(w => w.text).join(' ');
           
-          // Calculate starting position
-          let xPos = (canvas.width - totalWidth) / 2;
-          const yPos = canvas.height - 80;
+          // Draw background for better readability
+          const fontSize = Math.min(canvas.width * 0.05, 48); // Responsive font size
+          ctx.font = `${fontSize}px Inter, system-ui, sans-serif`;
+          const textMetrics = ctx.measureText(displayText);
+          const textWidth = textMetrics.width + 40; // Add padding
+          const textHeight = fontSize * 1.5;
+          const textX = canvas.width / 2 - textWidth / 2;
+          const textY = canvas.height - canvas.height * 0.1 - textHeight / 2;
+          
+          // Draw rounded rectangle background
+          const radius = 10;
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+          ctx.beginPath();
+          ctx.moveTo(textX + radius, textY);
+          ctx.lineTo(textX + textWidth - radius, textY);
+          ctx.quadraticCurveTo(textX + textWidth, textY, textX + textWidth, textY + radius);
+          ctx.lineTo(textX + textWidth, textY + textHeight - radius);
+          ctx.quadraticCurveTo(textX + textWidth, textY + textHeight, textX + textWidth - radius, textY + textHeight);
+          ctx.lineTo(textX + radius, textY + textHeight);
+          ctx.quadraticCurveTo(textX, textY + textHeight, textX, textY + textHeight - radius);
+          ctx.lineTo(textX, textY + radius);
+          ctx.quadraticCurveTo(textX, textY, textX + radius, textY);
+          ctx.closePath();
+          ctx.fill();
           
           // Draw each word
-          words.forEach((word, index) => {
-            const wordWidth = ctx.measureText(word).width;
-            
-            // Highlighted words in red, others in white
-            if (index < highlightedWordCount) {
+          let xPos = canvas.width / 2 - textMetrics.width / 2;
+          const yPos = canvas.height - canvas.height * 0.1;
+          
+          displayWords.forEach((word, index) => {
+            // Set font based on highlight status
+            if (word.highlighted) {
               ctx.fillStyle = '#FF5C5C'; // TikTok-style highlight color
-              ctx.font = 'bold 36px Inter, system-ui, sans-serif';
+              ctx.font = `bold ${fontSize}px Inter, system-ui, sans-serif`;
             } else {
               ctx.fillStyle = '#FFFFFF';
-              ctx.font = '36px Inter, system-ui, sans-serif';
+              ctx.font = `${fontSize}px Inter, system-ui, sans-serif`;
             }
             
+            // Measure this word
+            const wordWidth = ctx.measureText(word.text).width;
+            
             // Draw word
-            ctx.fillText(word, xPos + wordWidth / 2, yPos);
+            ctx.fillText(word.text, xPos + wordWidth / 2, yPos);
             
             // Move position for next word
             xPos += wordWidth + ctx.measureText(' ').width;
           });
+          
+          // Add progress indicator at the bottom
+          const progressBarHeight = 4;
+          const progressBarWidth = canvas.width * 0.6;
+          const progressBarX = (canvas.width - progressBarWidth) / 2;
+          const progressBarY = canvas.height - 20;
+          
+          // Background
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+          ctx.fillRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight);
+          
+          // Progress
+          ctx.fillStyle = '#FF5C5C';
+          ctx.fillRect(progressBarX, progressBarY, progressBarWidth * subtitleProgress, progressBarHeight);
         }
         
         // Check if we should continue animation
