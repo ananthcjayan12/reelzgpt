@@ -475,11 +475,11 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
 
         <Separator />
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <h3 className="text-sm font-medium">Audio</h3>
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
                   size="sm"
@@ -519,9 +519,9 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
           </div>
 
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <h3 className="text-sm font-medium">Image</h3>
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
                   size="sm"
@@ -563,9 +563,9 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
         <Separator />
 
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <h3 className="text-sm font-medium">Preview</h3>
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
                 size="sm"
