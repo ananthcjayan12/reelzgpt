@@ -474,77 +474,115 @@ export function VideoProcessor() {
   const handleGenerateVideo = async () => {
     try {
       if (!scenes || scenes.length === 0 || !currentProject) {
+        console.log('[VideoProcessor] Cannot generate video: No scenes or project available');
         alert('No scenes available to process');
         return;
       }
 
       // Check if all scenes have audio and images
+      console.log('[VideoProcessor] Checking scene readiness...', {
+        totalScenes: scenes.length,
+        scenesStatus: scenes.map(scene => ({
+          id: scene.id,
+          hasAudio: !!(scene.status?.audioGenerated || scene.audioPath),
+          hasImage: !!(scene.status?.imageGenerated || scene.imagePath),
+          hasSubtitles: !!scene.subtitles?.segments?.length
+        }))
+      });
+
       const allScenesReady = scenes.every(
         scene => (scene.status?.audioGenerated || scene.audioPath) && 
                 (scene.status?.imageGenerated || scene.imagePath)
       );
 
       if (!allScenesReady) {
+        console.log('[VideoProcessor] Video generation aborted: Not all scenes have required assets');
         alert('Please generate all audio and images before creating the video');
         return;
       }
 
       setIsGeneratingVideo(true);
       setVideoGenerationProgress({ stage: 'preparing', progress: 0 });
-      console.log('[VideoProcessor] Starting video generation...');
+      console.log('[VideoProcessor] Starting video generation process...', {
+        projectTitle: currentProject.title,
+        videoFormat: currentProject.videoFormat,
+        numberOfScenes: scenes.length
+      });
 
       // Simulate progress updates for different stages
       const updateProgress = (stage: 'preparing' | 'processing' | 'finalizing', progress: number) => {
+        console.log(`[VideoProcessor] ${stage.charAt(0).toUpperCase() + stage.slice(1)} progress: ${progress}%`);
         setVideoGenerationProgress({ stage, progress });
       };
 
       // Preparing stage
       updateProgress('preparing', 0);
+      console.log('[VideoProcessor] Preparing assets for video generation...');
       await new Promise(resolve => setTimeout(resolve, 1000));
       updateProgress('preparing', 100);
 
       // Processing stage
       updateProgress('processing', 0);
       const totalScenes = scenes.length;
+      console.log('[VideoProcessor] Beginning scene processing...');
+      
       for (let i = 0; i < totalScenes; i++) {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
+        console.log(`[VideoProcessor] Processing scene ${i + 1}/${totalScenes}`, {
+          sceneId: scenes[i].id,
+          audioPath: scenes[i].audioPath,
+          imagePath: scenes[i].imagePath,
+          hasSubtitles: !!scenes[i].subtitles
+        });
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
         updateProgress('processing', ((i + 1) / totalScenes) * 100);
       }
 
       // Finalizing stage
+      console.log('[VideoProcessor] All scenes processed, starting video generation...');
       updateProgress('finalizing', 0);
       
-      // Generate the video
+      console.log('[VideoProcessor] Calling project service to generate video...');
       const video = await projectService.generateVideo(scenes, currentProject);
+      console.log('[VideoProcessor] Video blob received from project service', {
+        size: video.size,
+        type: video.type
+      });
       
       updateProgress('finalizing', 100);
-      console.log('[VideoProcessor] Video generation complete, creating download link');
       
       // Create video URL for preview
       if (generatedVideoUrl) {
+        console.log('[VideoProcessor] Revoking previous video URL');
         URL.revokeObjectURL(generatedVideoUrl);
       }
       const videoUrl = URL.createObjectURL(video);
+      console.log('[VideoProcessor] Created new video URL for preview');
       setGeneratedVideoUrl(videoUrl);
       
       // Create download link
-      const a = document.createElement('a');
-      a.href = videoUrl;
-      
-      // Generate a safe filename
       const projectTitle = currentProject.title || 'generated-video';
       const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
       const timestamp = new Date().toISOString().split('T')[0];
-      a.download = `${safeTitle}-${timestamp}.webm`;
+      const filename = `${safeTitle}-${timestamp}.webm`;
+      
+      console.log('[VideoProcessor] Initiating video download', { filename });
+      const a = document.createElement('a');
+      a.href = videoUrl;
+      a.download = filename;
       
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       
-      console.log('[VideoProcessor] Video download initiated');
+      console.log('[VideoProcessor] Video generation and download process complete');
 
     } catch (error: any) {
-      console.error('[VideoProcessor] Error generating video:', error);
+      console.error('[VideoProcessor] Error during video generation:', {
+        error,
+        message: error.message,
+        stack: error.stack
+      });
       alert(`Failed to generate video: ${error.message}`);
       setError({
         stage: 'video-processing',
@@ -555,6 +593,7 @@ export function VideoProcessor() {
     } finally {
       setIsGeneratingVideo(false);
       setVideoGenerationProgress(null);
+      console.log('[VideoProcessor] Video generation process finished');
     }
   };
 

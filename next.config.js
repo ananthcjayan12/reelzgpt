@@ -25,10 +25,6 @@ const nextConfig = {
 
     return config;
   },
-  experimental: {
-    // Enable app directory
-    appDir: true,
-  },
   headers: async () => {
     return [
       {
