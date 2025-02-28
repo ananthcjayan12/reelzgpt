@@ -5,7 +5,7 @@ import { Scene } from '@/types';
 import { generateAudio } from '@/lib/services/openai';
 import { generateImage, downloadImage } from '@/lib/services/replicate';
 import { FileSystemService } from '@/lib/services/filesystem';
-import { useProjectActions } from '@/lib/store';
+import { useProjectActions, useCurrentProject } from '@/lib/store';
 import { VideoPlayerWithSubtitles } from './VideoPlayerWithSubtitles';
 import { transcribeAudio } from '@/lib/services/whisper';
 import { useSettingsStore } from '@/lib/store/settings';
@@ -51,6 +51,8 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
   // Refs for file inputs
   const imageInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+
+  const currentProject = useCurrentProject();
 
   // Update edited content when scene changes
   useEffect(() => {
@@ -157,8 +159,10 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
       // Initialize file system with user interaction
       await fileSystem.initialize(true);
       
-      // Generate image from prompt
-      const imageUrl = await generateImage(scene.imagePrompt);
+      // Generate image from prompt with correct aspect ratio
+      const imageUrl = await generateImage(scene.imagePrompt, {
+        isReel: currentProject?.videoFormat === 'reel'
+      });
       
       // Download and save image
       const image = await downloadImage(imageUrl);

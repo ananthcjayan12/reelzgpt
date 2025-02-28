@@ -24,7 +24,7 @@ export async function POST(request: Request) {
           go_fast: true,
           megapixels: "1",
           num_outputs: 1,
-          aspect_ratio :aspect_ratio,
+          aspect_ratio: aspect_ratio,
           output_format: "png",
           output_quality: 80,
           num_inference_steps: 4
