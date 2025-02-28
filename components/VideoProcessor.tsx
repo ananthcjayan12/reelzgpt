@@ -43,7 +43,7 @@ interface ScenePreviewProps {
 
 export function VideoProcessor() {
   const [url, setUrl] = useState('');
-  const [videoFormat, setVideoFormat] = useState<'landscape' | 'reel'>('landscape');
+  const [videoFormat, setVideoFormat] = useState<'landscape' | 'reel'>('reel');
   const { isProcessing, progress } = useProcessingState();
   const scenes = useScenes();
   const currentProject = useCurrentProject();
@@ -597,6 +597,7 @@ export function VideoProcessor() {
                   variant={videoFormat === 'landscape' ? 'default' : 'outline'}
                   onClick={() => setVideoFormat('landscape')}
                   disabled={isProcessing}
+                  size="sm"
                 >
                   Landscape
                 </Button>
@@ -605,6 +606,7 @@ export function VideoProcessor() {
                   variant={videoFormat === 'reel' ? 'default' : 'outline'}
                   onClick={() => setVideoFormat('reel')}
                   disabled={isProcessing}
+                  size="sm"
                 >
                   Reel
                 </Button>

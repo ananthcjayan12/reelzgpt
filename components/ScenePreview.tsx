@@ -428,12 +428,17 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
         <div className="space-y-4">
           <div>
             <label className="text-sm font-medium">Narration</label>
-            <Textarea
-              value={editedNarration}
-              onChange={(e) => setEditedNarration(e.target.value)}
-              placeholder="Enter narration text"
-              className="mt-1"
-            />
+            <div className="mt-1 relative">
+              <Textarea
+                value={editedNarration}
+                onChange={(e) => setEditedNarration(e.target.value)}
+                placeholder="Enter the narration text for this scene. This will be converted to speech."
+                className="min-h-[120px] text-base leading-relaxed resize-y"
+              />
+              <div className="absolute bottom-2 right-2 text-xs text-muted-foreground">
+                {editedNarration?.length || 0} characters
+              </div>
+            </div>
             <div className="flex justify-end mt-2">
               <Button variant="outline" size="sm" onClick={handleSaveNarration}>
                 <Save className="h-4 w-4 mr-2" />
@@ -444,12 +449,17 @@ export function ScenePreview({ scene, onDelete }: ScenePreviewProps) {
 
           <div>
             <label className="text-sm font-medium">Image Prompt</label>
-            <Textarea
-              value={editedImagePrompt}
-              onChange={(e) => setEditedImagePrompt(e.target.value)}
-              placeholder="Enter image generation prompt"
-              className="mt-1"
-            />
+            <div className="mt-1 relative">
+              <Textarea
+                value={editedImagePrompt}
+                onChange={(e) => setEditedImagePrompt(e.target.value)}
+                placeholder="Describe the image you want to generate. Be specific and detailed for better results."
+                className="min-h-[120px] text-base leading-relaxed resize-y"
+              />
+              <div className="absolute bottom-2 right-2 text-xs text-muted-foreground">
+                {editedImagePrompt?.length || 0} characters
+              </div>
+            </div>
             <div className="flex justify-end mt-2">
               <Button variant="outline" size="sm" onClick={handleSaveImagePrompt}>
                 <Save className="h-4 w-4 mr-2" />

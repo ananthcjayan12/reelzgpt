@@ -17,19 +17,17 @@ export async function POST(request: Request) {
     });
 
     const output = await replicate.run(
-      "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
+      "black-forest-labs/flux-schnell",
       {
         input: {
           prompt,
-          negative_prompt: "blurry, low quality, distorted, deformed, ugly, bad anatomy",
-          width,
-          height,
-          aspect_ratio,
-          scheduler: "K_EULER",
+          go_fast: true,
+          megapixels: "1",
           num_outputs: 1,
-          guidance_scale: 7.5,
-          num_inference_steps: 50,
-          seed: Math.floor(Math.random() * 1000000)
+          aspect_ratio :aspect_ratio,
+          output_format: "png",
+          output_quality: 80,
+          num_inference_steps: 4
         }
       }
     );
