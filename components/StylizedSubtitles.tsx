@@ -65,13 +65,17 @@ export function StylizedSubtitles({ subtitles, currentTime, style = 'default' }:
         : active.words.findIndex(word => word.start > currentTime);
 
       // Calculate how many words to show before and after the focus word
-      const totalWords = displayWordCount;
+      const totalWords = Math.min(displayWordCount, active.words.length);
       const wordsBefore = Math.floor((totalWords - 1) / 2);
-      const wordsAfter = totalWords - wordsBefore - 1;
       
       // Determine which words to display around the focus word
-      const startIndex = Math.max(0, effectiveFocusIndex - wordsBefore);
-      const endIndex = Math.min(active.words.length, startIndex + totalWords);
+      let startIndex = Math.max(0, effectiveFocusIndex - wordsBefore);
+      let endIndex = Math.min(active.words.length, startIndex + totalWords);
+
+      // Adjust start index if we're near the end to always show totalWords if possible
+      if (endIndex - startIndex < totalWords && endIndex === active.words.length) {
+        startIndex = Math.max(0, endIndex - totalWords);
+      }
       
       const wordsToDisplay = active.words
         .slice(startIndex, endIndex)
@@ -96,20 +100,29 @@ export function StylizedSubtitles({ subtitles, currentTime, style = 'default' }:
       // Calculate how many words to show before and after the focus word
       const totalWords = Math.min(displayWordCount, words.length);
       const wordsBefore = Math.floor((totalWords - 1) / 2);
-      const wordsAfter = totalWords - wordsBefore - 1;
       
       // Get a window of words around the focus word
-      const startIndex = Math.max(0, estimatedFocusIndex - wordsBefore);
-      const endIndex = Math.min(words.length, startIndex + totalWords);
+      let startIndex = Math.max(0, estimatedFocusIndex - wordsBefore);
+      let endIndex = Math.min(words.length, startIndex + totalWords);
+
+      // Adjust start index if we're near the end
+      if (endIndex - startIndex < totalWords && endIndex === words.length) {
+        startIndex = Math.max(0, endIndex - totalWords);
+      }
       
+      // Calculate estimated timings for each word
+      const wordDuration = subtitleDuration / words.length;
       const wordsToDisplay = words
         .slice(startIndex, endIndex)
-        .map((word, index) => ({
-          word,
-          start: active.start + (subtitleDuration * (startIndex + index) / words.length),
-          end: active.start + (subtitleDuration * (startIndex + index + 1) / words.length),
-          isFocus: index + startIndex === estimatedFocusIndex
-        }));
+        .map((word, index) => {
+          const wordStart = active.start + ((startIndex + index) * wordDuration);
+          return {
+            word,
+            start: wordStart,
+            end: wordStart + wordDuration,
+            isFocus: index + startIndex === estimatedFocusIndex
+          };
+        });
       
       setDisplayWords(wordsToDisplay);
     }

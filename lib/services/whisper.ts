@@ -20,17 +20,25 @@ interface WhisperWord {
   end: number;
 }
 
+interface WhisperSegment {
+  words: WhisperWord[];
+  start: number;
+  end: number;
+  text: string;
+}
+
 interface WhisperTranscriptionResult {
   text: string;
-  segments: {
+  segments: Array<{
     id: number;
     start: number;
     end: number;
     text: string;
     confidence: number;
     words?: WhisperWord[];
-  }[];
+  }>;
   words?: WhisperWord[];
+  duration?: number;
 }
 
 export interface SubtitleSegment {
@@ -63,9 +71,8 @@ export async function transcribeAudio(audioBlob: Blob): Promise<WhisperTranscrip
     formData.append('file', audioBlob, 'audio.mp3');
     formData.append('model', 'whisper-1');
     formData.append('response_format', 'verbose_json');
-    
-    // Important: Use array format for timestamp_granularities
     formData.append('timestamp_granularities[]', 'word');
+    formData.append('language', 'en');
     
     // Make the API request
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -98,42 +105,78 @@ export async function transcribeAudio(audioBlob: Blob): Promise<WhisperTranscrip
       segments: []
     };
     
-    // Check if segments exist before mapping
-    if (result.segments && Array.isArray(result.segments)) {
-      processedResult.segments = result.segments.map((segment: any) => ({
-        id: segment.id,
-        start: segment.start,
-        end: segment.end,
-        text: segment.text,
-        confidence: segment.confidence,
-        words: segment.words || [] // Include word-level timestamps if available
-      }));
+    // If we have word-level timing data, group words into segments
+    if (result.words && Array.isArray(result.words)) {
+      // Group words into segments based on natural pauses (gaps > 1 second)
+      let currentSegment: WhisperSegment | null = null;
+      const words = result.words as WhisperWord[];
+      
+      words.forEach((word: WhisperWord, index: number) => {
+        // Start a new segment if:
+        // 1. This is the first word
+        // 2. There's a gap > 1 second from the last word
+        // 3. We've accumulated more than 15 words in the current segment
+        const shouldStartNewSegment = !currentSegment || 
+          (index > 0 && word.start - words[index - 1].end > 1) ||
+          (currentSegment.words.length >= 15);
+        
+        if (shouldStartNewSegment) {
+          // If we have a current segment, add it to our segments array
+          if (currentSegment) {
+            processedResult.segments.push({
+              id: processedResult.segments.length,
+              start: currentSegment.start,
+              end: currentSegment.end,
+              text: currentSegment.text,
+              confidence: 1.0,
+              words: currentSegment.words
+            });
+          }
+          
+          // Start a new segment
+          currentSegment = {
+            words: [word],
+            start: word.start,
+            end: word.end,
+            text: word.word
+          };
+        } else if (currentSegment) {
+          // Add word to current segment
+          currentSegment.words.push(word);
+          currentSegment.end = word.end;
+          currentSegment.text = currentSegment.words.map(w => w.word).join(' ');
+        }
+      });
+      
+      // Add the last segment if we have one
+      if (currentSegment) {
+        processedResult.segments.push({
+          id: processedResult.segments.length,
+          start: currentSegment.start,
+          end: currentSegment.end,
+          text: currentSegment.text,
+          confidence: 1.0,
+          words: currentSegment.words
+        });
+      }
+      
+      // Log segment information for debugging
+      console.log('[WhisperService] Created segments from word timing data:', {
+        totalWords: result.words.length,
+        segmentCount: processedResult.segments.length,
+        firstSegment: processedResult.segments[0]
+      });
     } else {
-      console.warn('[WhisperService] No segments found in Whisper response, creating a single segment');
-      // Create a single segment if none exist
+      // Fallback: create a single segment if no word timing data
+      console.warn('[WhisperService] No word-level timing data found, creating a single segment');
       processedResult.segments = [{
         id: 0,
         start: 0,
-        end: 30, // Assume 30 seconds if we don't know
+        end: result.duration || 30,
         text: result.text,
-        confidence: 1.0
+        confidence: 1.0,
+        words: []
       }];
-    }
-    
-    // Add global words if available
-    if (result.words && Array.isArray(result.words)) {
-      processedResult.words = result.words;
-      
-      // If we have global words but no segments with words, add words to the first segment
-      if (processedResult.segments.length > 0 && 
-          (!processedResult.segments[0].words || processedResult.segments[0].words.length === 0)) {
-        processedResult.segments[0].words = result.words;
-      }
-      
-      console.log('[WhisperService] Word-level timestamps received:', result.words.length);
-      console.log('[WhisperService] Sample words:', result.words.slice(0, 3));
-    } else {
-      console.warn('[WhisperService] No word-level timestamps found in response');
     }
     
     return processedResult;

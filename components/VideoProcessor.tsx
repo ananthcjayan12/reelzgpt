@@ -352,20 +352,8 @@ export function VideoProcessor() {
   };
 
   const handleGenerateAllSubtitles = async () => {
-    if (!currentProject) {
-      alert('Please create a project first');
-      return;
-    }
-
-    if (!scenes || scenes.length === 0) {
-      alert('No scenes to generate subtitles for');
-      return;
-    }
-
-    // Check if OpenAI API key is set
-    const settings = useSettingsStore.getState();
-    if (!settings.openaiApiKey) {
-      alert('OpenAI API key is not set. Please configure it in the settings.');
+    if (!scenes.length) {
+      alert('No scenes to process');
       return;
     }
 
@@ -404,7 +392,20 @@ export function VideoProcessor() {
           // Transcribe audio using Whisper
           const transcription = await transcribeAudio(audioBlob);
           
-          // Generate VTT format
+          // Process segments to ensure they have the correct format
+          const subtitleSegments = transcription.segments.map(segment => ({
+            id: segment.id,
+            start: segment.start,
+            end: segment.end,
+            text: segment.text.trim(),
+            words: segment.words?.map(word => ({
+              word: word.word.trim(),
+              start: word.start,
+              end: word.end
+            }))
+          }));
+          
+          // Generate VTT format for saving
           const vttContent = generateVTT(transcription);
           
           // Save VTT file
@@ -419,13 +420,6 @@ export function VideoProcessor() {
           }
           
           // Update scene with subtitles
-          const subtitleSegments: SubtitleSegment[] = transcription.segments.map(segment => ({
-            id: segment.id,
-            start: segment.start,
-            end: segment.end,
-            text: segment.text.trim()
-          }));
-          
           updateScene(scene.id, { 
             subtitles: {
               segments: subtitleSegments,
@@ -438,14 +432,17 @@ export function VideoProcessor() {
             }
           });
           
-          console.log(`[VideoProcessor] Subtitles generated for scene ${scene.id}`);
+          console.log(`[VideoProcessor] Subtitles generated for scene ${scene.id}:`, {
+            segmentsCount: subtitleSegments.length,
+            hasWordTimings: subtitleSegments.some(s => s.words && s.words.length > 0),
+            firstSegment: subtitleSegments[0]
+          });
         } catch (error: any) {
           console.error(`[VideoProcessor] Error generating subtitles for scene ${scene.id}:`, error);
           
-          // Show a more user-friendly error message for API key issues
           if (error.message.includes('API key')) {
             alert(`Failed to transcribe audio for scene ${scene.id}: Please check your OpenAI API key in settings.`);
-            break; // Stop processing other scenes if API key is invalid
+            break;
           } else {
             setError({
               message: `Failed to generate subtitles for scene ${scene.id}: ${error.message}`,
@@ -460,7 +457,6 @@ export function VideoProcessor() {
     } catch (error: any) {
       console.error('[VideoProcessor] Error generating all subtitles:', error);
       
-      // Show a more user-friendly error message for API key issues
       if (error.message.includes('API key')) {
         alert('Failed to transcribe audio: Please check your OpenAI API key in settings.');
       } else {
