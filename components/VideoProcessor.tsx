@@ -575,25 +575,31 @@ export function VideoProcessor() {
           <CardDescription>Enter a YouTube URL to get started</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="flex items-center space-x-4">
-              <div className="flex-1">
-                <Input
-                  type="text"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder="Enter YouTube URL"
-                  className="w-full"
-                  disabled={isProcessing}
-                />
+          <form onSubmit={handleSubmit} className="max-w-3xl mx-auto space-y-6">
+            {/* Search Input */}
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <Youtube className="h-5 w-5 text-muted-foreground" />
               </div>
-              <div className="flex items-center space-x-2">
+              <Input
+                type="text"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="Paste YouTube URL here"
+                className="w-full pl-12 pr-4 h-14 text-lg"
+                disabled={isProcessing}
+              />
+            </div>
+
+            {/* Format Selection and Submit */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden sm:col-span-2">
                 <Button
                   type="button"
                   variant={videoFormat === 'landscape' ? 'default' : 'outline'}
                   onClick={() => setVideoFormat('landscape')}
                   disabled={isProcessing}
-                  size="sm"
+                  className="rounded-none border-r-0 h-12 text-base"
                 >
                   Landscape
                 </Button>
@@ -602,13 +608,17 @@ export function VideoProcessor() {
                   variant={videoFormat === 'reel' ? 'default' : 'outline'}
                   onClick={() => setVideoFormat('reel')}
                   disabled={isProcessing}
-                  size="sm"
+                  className="rounded-none h-12 text-base"
                 >
                   Reel
                 </Button>
               </div>
-              <Button type="submit" disabled={isProcessing || !url}>
-                <Youtube className="mr-2 h-4 w-4" />
+              <Button 
+                type="submit" 
+                disabled={isProcessing || !url}
+                className="h-12 text-base w-full"
+              >
+                <Youtube className="mr-2 h-5 w-5" />
                 Process
               </Button>
             </div>
@@ -618,41 +628,46 @@ export function VideoProcessor() {
 
       {currentProject ? (
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
+          <CardHeader className="flex flex-col gap-4">
             <div>
               <CardTitle>Project: {currentProject.title}</CardTitle>
               <CardDescription>Manage your video scenes and assets</CardDescription>
             </div>
-            <div className="flex items-center space-x-2">
-              <Button
-                variant="outline"
-                onClick={handleGenerateAllAudio}
-                disabled={isGeneratingAllAudio || isProcessing || isGeneratingVideo}
-              >
-                <Mic className="mr-2 h-4 w-4" />
-                Generate All Audio
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleGenerateAllImages}
-                disabled={isGeneratingAllImages || isProcessing || isGeneratingVideo}
-              >
-                <ImageIcon className="mr-2 h-4 w-4" />
-                Generate All Images
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleGenerateAllSubtitles}
-                disabled={isGeneratingAllSubtitles || isProcessing || isGeneratingVideo}
-              >
-                <Subtitles className="mr-2 h-4 w-4" />
-                Generate All Subtitles
-              </Button>
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+                <Button
+                  variant="outline"
+                  onClick={handleGenerateAllAudio}
+                  disabled={isGeneratingAllAudio || isProcessing || isGeneratingVideo}
+                  className="h-10"
+                >
+                  <Mic className="mr-2 h-4 w-4" />
+                  Generate All Audio
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleGenerateAllImages}
+                  disabled={isGeneratingAllImages || isProcessing || isGeneratingVideo}
+                  className="h-10"
+                >
+                  <ImageIcon className="mr-2 h-4 w-4" />
+                  Generate All Images
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleGenerateAllSubtitles}
+                  disabled={isGeneratingAllSubtitles || isProcessing || isGeneratingVideo}
+                  className="h-10"
+                >
+                  <Subtitles className="mr-2 h-4 w-4" />
+                  Generate All Subtitles
+                </Button>
+              </div>
               <Button
                 variant="default"
                 onClick={handleGenerateVideo}
                 disabled={isGeneratingVideo || isProcessing}
-                className="min-w-[160px]"
+                className="h-10"
               >
                 {isGeneratingVideo ? (
                   <>
