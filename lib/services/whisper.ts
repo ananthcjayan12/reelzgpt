@@ -27,6 +27,16 @@ interface WhisperSegment {
   text: string;
 }
 
+interface WhisperAPIResponse {
+  text: string;
+  words?: {
+    word: string;
+    start: number;
+    end: number;
+  }[];
+  duration?: number;
+}
+
 interface WhisperTranscriptionResult {
   text: string;
   segments: Array<{
@@ -37,7 +47,6 @@ interface WhisperTranscriptionResult {
     confidence: number;
     words?: WhisperWord[];
   }>;
-  words?: WhisperWord[];
   duration?: number;
 }
 
@@ -88,7 +97,7 @@ export async function transcribeAudio(audioBlob: Blob): Promise<WhisperTranscrip
       throw new Error(`Whisper API error: ${errorData.error?.message || response.statusText}`);
     }
     
-    const result = await response.json();
+    const result = (await response.json()) as WhisperAPIResponse;
     console.log('[WhisperService] Transcription successful');
     
     // Log the full response structure to debug
@@ -99,19 +108,24 @@ export async function transcribeAudio(audioBlob: Blob): Promise<WhisperTranscrip
       throw new Error('Invalid response from Whisper API: Missing text field');
     }
     
-    // Process the result to include word-level timestamps
     const processedResult: WhisperTranscriptionResult = {
       text: result.text,
-      segments: []
+      segments: [],
+      duration: result.duration
     };
-    
+
     // If we have word-level timing data, group words into segments
     if (result.words && Array.isArray(result.words)) {
+      const words: WhisperWord[] = result.words.map(w => ({
+        word: w.word,
+        start: w.start,
+        end: w.end
+      }));
+
       // Group words into segments based on natural pauses (gaps > 1 second)
       let currentSegment: WhisperSegment | null = null;
-      const words = result.words as WhisperWord[];
       
-      words.forEach((word: WhisperWord, index: number) => {
+      words.forEach((word, index) => {
         // Start a new segment if:
         // 1. This is the first word
         // 2. There's a gap > 1 second from the last word
@@ -162,7 +176,7 @@ export async function transcribeAudio(audioBlob: Blob): Promise<WhisperTranscrip
       
       // Log segment information for debugging
       console.log('[WhisperService] Created segments from word timing data:', {
-        totalWords: result.words.length,
+        totalWords: words.length,
         segmentCount: processedResult.segments.length,
         firstSegment: processedResult.segments[0]
       });
@@ -174,8 +188,7 @@ export async function transcribeAudio(audioBlob: Blob): Promise<WhisperTranscrip
         start: 0,
         end: result.duration || 30,
         text: result.text,
-        confidence: 1.0,
-        words: []
+        confidence: 1.0
       }];
     }
     

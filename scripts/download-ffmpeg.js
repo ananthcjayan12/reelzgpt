@@ -1,81 +1,62 @@
-const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 
-const FFMPEG_VERSION = '0.10.0';
-const FILES_TO_DOWNLOAD = [
+// Create directories if they don't exist
+const publicDir = path.join(process.cwd(), 'public');
+const ffmpegDir = path.join(publicDir, 'ffmpeg');
+
+if (!fs.existsSync(publicDir)) {
+  fs.mkdirSync(publicDir, { recursive: true });
+}
+
+if (!fs.existsSync(ffmpegDir)) {
+  fs.mkdirSync(ffmpegDir, { recursive: true });
+}
+
+// FFmpeg files to download
+const files = [
   {
-    url: `https://unpkg.com/@ffmpeg/core@${FFMPEG_VERSION}/dist/ffmpeg-core.js`,
-    filename: 'ffmpeg-core.js'
+    url: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+    dest: path.join(ffmpegDir, 'ffmpeg-core.js')
   },
   {
-    url: `https://unpkg.com/@ffmpeg/core@${FFMPEG_VERSION}/dist/ffmpeg-core.wasm`,
-    filename: 'ffmpeg-core.wasm'
+    url: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.wasm',
+    dest: path.join(ffmpegDir, 'ffmpeg-core.wasm')
   },
   {
-    url: `https://unpkg.com/@ffmpeg/core@${FFMPEG_VERSION}/dist/ffmpeg-core.worker.js`,
-    filename: 'ffmpeg-core.worker.js'
+    url: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.worker.js',
+    dest: path.join(ffmpegDir, 'ffmpeg-core.worker.js')
   }
 ];
 
-const PUBLIC_FFMPEG_PATH = path.join(__dirname, '../public/ffmpeg');
+console.log('Downloading FFmpeg files...');
 
-// Create the ffmpeg directory if it doesn't exist
-if (!fs.existsSync(PUBLIC_FFMPEG_PATH)) {
-  fs.mkdirSync(PUBLIC_FFMPEG_PATH, { recursive: true });
-}
-
-// Download function with retry logic
-async function downloadFile(url, outputPath, retries = 3) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      await new Promise((resolve, reject) => {
-        console.log(`Downloading ${url}... (attempt ${attempt}/${retries})`);
-        
-        const file = fs.createWriteStream(outputPath);
-        https.get(url, response => {
-          if (response.statusCode !== 200) {
-            reject(new Error(`Failed to download: ${response.statusCode}`));
-            return;
-          }
-
-          response.pipe(file);
-          
-          file.on('finish', () => {
-            file.close();
-            console.log(`Downloaded ${outputPath}`);
-            resolve();
-          });
-        }).on('error', err => {
-          fs.unlink(outputPath, () => {});
-          reject(err);
-        });
+// Download each file
+const downloadFile = (url, dest) => {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https.get(url, (response) => {
+      response.pipe(file);
+      file.on('finish', () => {
+        file.close();
+        console.log(`Downloaded: ${dest}`);
+        resolve();
       });
-      
-      return; // Success, exit the retry loop
-    } catch (error) {
-      console.error(`Attempt ${attempt} failed:`, error.message);
-      if (attempt === retries) {
-        throw error; // Throw on final attempt
-      }
-      // Wait before retrying
-      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-    }
-  }
-}
+    }).on('error', (err) => {
+      fs.unlink(dest, () => {}); // Delete the file on error
+      console.error(`Error downloading ${url}: ${err.message}`);
+      reject(err);
+    });
+  });
+};
 
 // Download all files
-async function downloadAll() {
-  try {
-    for (const file of FILES_TO_DOWNLOAD) {
-      const outputPath = path.join(PUBLIC_FFMPEG_PATH, file.filename);
-      await downloadFile(file.url, outputPath);
-    }
-    console.log('All FFmpeg core files downloaded successfully!');
-  } catch (error) {
-    console.error('Error downloading FFmpeg core files:', error);
+Promise.all(files.map(file => downloadFile(file.url, file.dest)))
+  .then(() => {
+    console.log('All FFmpeg files downloaded successfully!');
+  })
+  .catch(err => {
+    console.error('Error downloading FFmpeg files:', err);
     process.exit(1);
-  }
-}
-
-downloadAll(); 
+  }); 

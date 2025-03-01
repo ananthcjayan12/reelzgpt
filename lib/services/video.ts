@@ -204,7 +204,7 @@ export class VideoProcessor {
       // Convert scenes to video segments sequentially
       const segments = [];
       for (const scene of scenes) {
-        if (!scene.audio || !scene.image) {
+        if (!scene.audioPath || !scene.imagePath) {
           throw new ProcessingError({
             stage: 'video-processing',
             message: `Missing audio or image for scene ${scene.order}`,
@@ -213,15 +213,15 @@ export class VideoProcessor {
         }
 
         // Get image buffer
-        const imageBuffer = await fetch(scene.image).then(res => res.arrayBuffer());
+        const imageBuffer = await fetch(scene.imagePath).then(res => res.arrayBuffer());
         
         // Get audio as blob
         let audioBlob: Blob;
-        if (typeof scene.audio === 'string') {
-          const response = await fetch(scene.audio);
+        if (typeof scene.audioPath === 'string') {
+          const response = await fetch(scene.audioPath);
           audioBlob = await response.blob();
         } else {
-          audioBlob = scene.audio;
+          audioBlob = scene.audioPath;
         }
 
         // Get audio duration
