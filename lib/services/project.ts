@@ -161,6 +161,15 @@ export class ProjectService {
     try {
       console.log('[ProjectService] Generating video from scenes');
       
+      // Check if MediaRecorder is supported
+      if (typeof MediaRecorder === 'undefined') {
+        throw new Error('MediaRecorder is not supported in this browser');
+      }
+      
+      // Check if browser is mobile
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      console.log(`[ProjectService] Browser environment: ${isMobile ? 'Mobile' : 'Desktop'}`);
+      
       // Get subtitle settings from the store
       const { subtitleSettings } = useSettingsStore.getState();
       const { highlightColor, displayWordCount, fontSize, showProgressBar } = subtitleSettings;
@@ -194,8 +203,29 @@ export class ProjectService {
         ...audioDestination.stream.getAudioTracks()
       ]);
       
+      // Check for supported MIME types
+      const getSupportedMimeType = () => {
+        const types = [
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm;codecs=vp8',
+          'video/webm',
+          'video/mp4'
+        ];
+        
+        for (const type of types) {
+          if (MediaRecorder.isTypeSupported(type)) {
+            console.log(`[ProjectService] Using supported MIME type: ${type}`);
+            return type;
+          }
+        }
+        
+        console.warn('[ProjectService] No preferred MIME types supported, using default');
+        return '';  // Let the browser choose the default
+      };
+      
       const mediaRecorder = new MediaRecorder(combinedStream, {
-        mimeType: 'video/webm;codecs=vp9',
+        mimeType: getSupportedMimeType(),
         videoBitsPerSecond: 5000000 // 5 Mbps
       });
       
@@ -206,11 +236,14 @@ export class ProjectService {
         }
       };
       
+      // Store the selected MIME type
+      const selectedMimeType = getSupportedMimeType() || 'video/webm';
+      
       // Create a promise that resolves when recording is complete
       const recordingPromise = new Promise<Blob>((resolve) => {
         mediaRecorder.onstop = () => {
-          const videoBlob = new Blob(chunks, { type: 'video/webm' });
-          console.log(`[ProjectService] Video generation complete, created ${videoBlob.size} byte video`);
+          const videoBlob = new Blob(chunks, { type: selectedMimeType });
+          console.log(`[ProjectService] Video generation complete, created ${videoBlob.size} byte video with type ${selectedMimeType}`);
           resolve(videoBlob);
         };
       });

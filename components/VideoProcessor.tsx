@@ -479,6 +479,13 @@ export function VideoProcessor() {
         return;
       }
 
+      // Check browser compatibility
+      if (typeof MediaRecorder === 'undefined') {
+        console.warn('[VideoProcessor] MediaRecorder not supported in this browser');
+        alert('Your browser does not support video recording. Please try using a desktop browser like Chrome or Firefox.');
+        return;
+      }
+
       // Check if all scenes have audio and images
       console.log('[VideoProcessor] Checking scene readiness...', {
         totalScenes: scenes.length,
@@ -564,9 +571,18 @@ export function VideoProcessor() {
       const projectTitle = currentProject.title || 'generated-video';
       const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
       const timestamp = new Date().toISOString().split('T')[0];
-      const filename = `${safeTitle}-${timestamp}.webm`;
       
-      console.log('[VideoProcessor] Initiating video download', { filename });
+      // Determine file extension based on MIME type
+      const getFileExtension = (mimeType: string) => {
+        if (mimeType.includes('mp4')) return 'mp4';
+        if (mimeType.includes('webm')) return 'webm';
+        return 'mp4'; // Default to mp4 as a fallback
+      };
+      
+      const fileExtension = getFileExtension(video.type);
+      const filename = `${safeTitle}-${timestamp}.${fileExtension}`;
+      
+      console.log('[VideoProcessor] Initiating video download', { filename, type: video.type });
       const a = document.createElement('a');
       a.href = videoUrl;
       a.download = filename;
