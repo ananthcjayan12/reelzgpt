@@ -10,6 +10,7 @@ export interface Settings {
     displayWordCount: number;
     fontSize: number;
     showProgressBar: boolean;
+    timingOffset: number;
   };
 }
 
@@ -37,6 +38,7 @@ export const useSettingsStore = create<SettingsState>()(
         displayWordCount: 5,
         fontSize: 24,
         showProgressBar: true,
+        timingOffset: 0.5,
       },
       setOpenAIKey: (key) => set({ openaiApiKey: key }),
       setReplicateKey: (key) => set({ replicateApiKey: key }),

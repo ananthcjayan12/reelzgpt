@@ -26,6 +26,7 @@ interface SubtitleSettings {
   displayWordCount: number;
   fontSize: number;
   showProgressBar: boolean;
+  timingOffset: number;
 }
 
 export function Settings() {
@@ -328,6 +329,34 @@ export function Settings() {
                       placeholder="#000000"
                     />
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Timing Offset</label>
+                  <div className="flex items-center space-x-4">
+                    <Input
+                      type="range"
+                      value={subtitleSettings.timingOffset}
+                      onChange={(e) => setSubtitleSettings({ timingOffset: parseFloat(e.target.value) })}
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      className="w-48"
+                    />
+                    <Input
+                      type="number"
+                      value={subtitleSettings.timingOffset}
+                      onChange={(e) => setSubtitleSettings({ timingOffset: parseFloat(e.target.value) })}
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      className="w-24"
+                    />
+                    <span className="text-sm text-muted-foreground">seconds</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Adjust how early subtitles appear before words are spoken. Higher values make subtitles appear earlier.
+                  </p>
                 </div>
 
                 <div className="flex items-center space-x-2">

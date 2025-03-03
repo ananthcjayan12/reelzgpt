@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
+import { Progress } from '@/components/ui/Progress';
 import { 
   Video, 
   Image as ImageIcon, 
@@ -63,6 +64,9 @@ export function VideoProcessor() {
   const [videoGenerationProgress, setVideoGenerationProgress] = useState<{
     stage: 'preparing' | 'processing' | 'finalizing';
     progress: number;
+    currentScene?: number;
+    totalScenes?: number;
+    sceneProgress?: number;
   } | null>(null);
 
   // Initialize FileSystemService only on the client side
@@ -525,25 +529,37 @@ export function VideoProcessor() {
         numberOfScenes: scenes.length
       });
 
-      // Set up progress tracking
+      // Set up progress tracking with enhanced feedback
       const progressHandler = (progress: number) => {
         let stage: 'preparing' | 'processing' | 'finalizing';
         
         // Map progress to stages
         if (progress < 0.1) {
           stage = 'preparing';
+          setVideoGenerationProgress({ 
+            stage, 
+            progress: progress * 10 * 100
+          });
         } else if (progress < 0.9) {
           stage = 'processing';
+          
+          // Extract scene information from the progress message if available
+          const { currentScene, totalScenes, sceneProgress } = projectService.getProgressDetails() || {};
+          
+          setVideoGenerationProgress({ 
+            stage, 
+            progress: ((progress - 0.1) / 0.8) * 100,
+            currentScene,
+            totalScenes,
+            sceneProgress
+          });
         } else {
           stage = 'finalizing';
+          setVideoGenerationProgress({ 
+            stage, 
+            progress: (progress - 0.9) * 10 * 100
+          });
         }
-        
-        setVideoGenerationProgress({ 
-          stage, 
-          progress: stage === 'processing' 
-            ? ((progress - 0.1) / 0.8) * 100 
-            : (stage === 'preparing' ? progress * 10 * 100 : (progress - 0.9) * 10 * 100)
-        });
       };
       
       // Use the project service's progress callback
@@ -554,7 +570,7 @@ export function VideoProcessor() {
         const timeoutPromise = new Promise<Blob>((_, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error('Video generation timed out. Try with fewer scenes or a desktop browser.'));
-          }, 180000); // 3 minute timeout
+          }, 420000); // 7 minute timeout
           return () => clearTimeout(timeout);
         });
         
@@ -639,6 +655,34 @@ export function VideoProcessor() {
         order: index + 1
       }));
     setScenes(updatedScenes);
+  };
+
+  // Enhanced progress display component
+  const renderProgressBar = () => {
+    if (!videoGenerationProgress) return null;
+    
+    const { stage, progress, currentScene, totalScenes, sceneProgress } = videoGenerationProgress;
+    
+    return (
+      <div className="w-full space-y-2">
+        <div className="flex justify-between text-sm text-muted-foreground">
+          <span>
+            {stage === 'preparing' && 'Preparing assets...'}
+            {stage === 'processing' && currentScene && totalScenes 
+              ? `Processing scene ${currentScene}/${totalScenes}${sceneProgress ? ` (${Math.round(sceneProgress)}%)` : ''}`
+              : stage === 'processing' ? 'Processing scenes...' : ''}
+            {stage === 'finalizing' && 'Finalizing video...'}
+          </span>
+          <span>{Math.round(progress)}%</span>
+        </div>
+        <Progress value={progress} className="h-2" />
+        {stage === 'processing' && (
+          <p className="text-xs text-muted-foreground mt-1">
+            This may take several minutes depending on the number of scenes. Please don't close this tab.
+          </p>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -746,13 +790,7 @@ export function VideoProcessor() {
                 {isGeneratingVideo ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {videoGenerationProgress ? (
-                      `${videoGenerationProgress.stage === 'preparing' ? 'Preparing' :
-                        videoGenerationProgress.stage === 'processing' ? 'Processing' :
-                        'Finalizing'} (${Math.round(videoGenerationProgress.progress)}%)`
-                    ) : (
-                      'Generating...'
-                    )}
+                    {renderProgressBar()}
                   </>
                 ) : (
                   <>
@@ -764,25 +802,18 @@ export function VideoProcessor() {
             </div>
           </CardHeader>
           <CardContent>
-            {videoGenerationProgress && (
-              <div className="mb-6 space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">
-                    {videoGenerationProgress.stage === 'preparing' ? 'Preparing scenes...' :
-                     videoGenerationProgress.stage === 'processing' ? 'Processing video...' :
-                     'Finalizing video...'}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {Math.round(videoGenerationProgress.progress)}%
-                  </span>
-                </div>
-                <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
-                  <div
-                    className="h-full bg-primary transition-all duration-500"
-                    style={{ width: `${videoGenerationProgress.progress}%` }}
-                  />
-                </div>
-              </div>
+            {isGeneratingVideo && (
+              <Card className="mt-4">
+                <CardHeader className="pb-3">
+                  <CardTitle>Generating Video</CardTitle>
+                  <CardDescription>
+                    Creating your video with {scenes.length} scenes
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {renderProgressBar()}
+                </CardContent>
+              </Card>
             )}
             
             <Tabs defaultValue="scenes" className="w-full">
