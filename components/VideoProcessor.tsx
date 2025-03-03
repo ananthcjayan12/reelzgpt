@@ -632,19 +632,32 @@ export function VideoProcessor() {
     const { stage, progress, currentScene, totalScenes, sceneProgress } = videoGenerationProgress;
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
+    let statusText = '';
+    let statusProgress = 0;
+    
+    // Determine the appropriate status text and progress value
+    if (stage === 'preparing') {
+      statusText = 'Preparing assets...';
+      statusProgress = progress;
+    } else if (stage === 'processing') {
+      if (currentScene && totalScenes) {
+        statusText = `Processing scene ${currentScene}/${totalScenes}${sceneProgress ? ` (${Math.round(sceneProgress)}%)` : ''}`;
+      } else {
+        statusText = 'Processing scenes...';
+      }
+      statusProgress = progress;
+    } else if (stage === 'finalizing') {
+      statusText = 'Finalizing video...';
+      statusProgress = progress;
+    }
+    
     return (
-      <div className="w-full space-y-2">
+      <div className="w-full space-y-2 mt-4 mb-6 px-2">
         <div className="flex justify-between text-sm text-muted-foreground">
-          <span>
-            {stage === 'preparing' && 'Preparing assets...'}
-            {stage === 'processing' && currentScene && totalScenes 
-              ? `Processing scene ${currentScene}/${totalScenes}${sceneProgress ? ` (${Math.round(sceneProgress)}%)` : ''}`
-              : stage === 'processing' ? 'Processing scenes...' : ''}
-            {stage === 'finalizing' && 'Finalizing video...'}
-          </span>
-          <span>{Math.round(progress)}%</span>
+          <span>{statusText}</span>
+          <span>{Math.round(statusProgress)}%</span>
         </div>
-        <Progress value={progress} className="h-2" />
+        <Progress value={statusProgress} className="h-2" />
         {stage === 'preparing' && progress > 40 && progress < 60 && isMobile && (
           <p className="text-xs text-amber-500 mt-1">
             <strong>Mobile device detected:</strong> This stage may take longer on mobile. Please be patient and keep the browser tab open.
@@ -765,7 +778,7 @@ export function VideoProcessor() {
                 {isGeneratingVideo ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {renderProgressBar()}
+                    Generating...
                   </>
                 ) : (
                   <>
