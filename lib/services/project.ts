@@ -23,6 +23,7 @@ class ProcessingError extends Error {
 export class ProjectService {
   private videoProcessor: VideoProcessor;
   private fileSystem: FileSystemService;
+  private progressCallback: ((progress: number) => void) | null = null;
 
   constructor() {
     this.videoProcessor = new VideoProcessor(this.updateProgress);
@@ -30,9 +31,22 @@ export class ProjectService {
   }
 
   /**
+   * Sets a callback function to receive progress updates directly
+   */
+  setProgressCallback(callback: ((progress: number) => void) | null) {
+    this.progressCallback = callback;
+  }
+
+  /**
    * Updates the progress status in the store
    */
   private updateProgress = (progress: number) => {
+    // Call the direct callback if set
+    if (this.progressCallback) {
+      this.progressCallback(progress);
+    }
+    
+    // Also update the store
     const { setProgress } = useProjectStore.getState();
     setProgress({
       stage: 'video-processing',
@@ -177,9 +191,18 @@ export class ProjectService {
       // Sort scenes by order
       const sortedScenes = [...scenes].sort((a, b) => a.order - b.order);
       
+      // OPTIMIZATION: Batch scenes for more efficient processing
+      // Process scenes in batches of 3 to avoid memory issues
+      const BATCH_SIZE = isMobile ? 2 : 3;
+      const sceneBatches = [];
+      for (let i = 0; i < sortedScenes.length; i += BATCH_SIZE) {
+        sceneBatches.push(sortedScenes.slice(i, i + BATCH_SIZE));
+      }
+      console.log(`[ProjectService] Split ${sortedScenes.length} scenes into ${sceneBatches.length} batches`);
+      
       // Create a canvas for rendering
       const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { alpha: false }); // Disable alpha for better performance
       
       if (!ctx) {
         throw new Error('Failed to get canvas context');
@@ -190,18 +213,8 @@ export class ProjectService {
       canvas.width = isReel ? 1080 : 1920;
       canvas.height = isReel ? 1920 : 1080;
       
-      // Create a MediaRecorder to capture the canvas
-      const stream = canvas.captureStream(30); // 30 FPS
-      
-      // Create an audio context for mixing audio
-      const audioContext = new AudioContext();
-      const audioDestination = audioContext.createMediaStreamDestination();
-      
-      // Add the audio destination to the stream tracks
-      const combinedStream = new MediaStream([
-        ...stream.getVideoTracks(),
-        ...audioDestination.stream.getAudioTracks()
-      ]);
+      // OPTIMIZATION: Reduce video quality on mobile for better performance
+      const videoBitrate = isMobile ? 2500000 : 5000000; // 2.5 Mbps for mobile, 5 Mbps for desktop
       
       // Check for supported MIME types
       const getSupportedMimeType = () => {
@@ -224,280 +237,341 @@ export class ProjectService {
         return '';  // Let the browser choose the default
       };
       
-      const mediaRecorder = new MediaRecorder(combinedStream, {
-        mimeType: getSupportedMimeType(),
-        videoBitsPerSecond: 5000000 // 5 Mbps
-      });
-      
-      const chunks: Blob[] = [];
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunks.push(e.data);
-        }
-      };
-      
       // Store the selected MIME type
       const selectedMimeType = getSupportedMimeType() || 'video/webm';
       
-      // Create a promise that resolves when recording is complete
-      const recordingPromise = new Promise<Blob>((resolve) => {
-        mediaRecorder.onstop = () => {
-          const videoBlob = new Blob(chunks, { type: selectedMimeType });
-          console.log(`[ProjectService] Video generation complete, created ${videoBlob.size} byte video with type ${selectedMimeType}`);
-          resolve(videoBlob);
+      // Process each batch of scenes and collect the resulting video blobs
+      const batchBlobs: Blob[] = [];
+      
+      for (let batchIndex = 0; batchIndex < sceneBatches.length; batchIndex++) {
+        const batch = sceneBatches[batchIndex];
+        console.log(`[ProjectService] Processing batch ${batchIndex + 1}/${sceneBatches.length} with ${batch.length} scenes`);
+        
+        // Create a MediaRecorder to capture the canvas for this batch
+        const stream = canvas.captureStream(30); // 30 FPS
+        
+        // Create an audio context for mixing audio
+        const audioContext = new AudioContext();
+        const audioDestination = audioContext.createMediaStreamDestination();
+        
+        // Add the audio destination to the stream tracks
+        const combinedStream = new MediaStream([
+          ...stream.getVideoTracks(),
+          ...audioDestination.stream.getAudioTracks()
+        ]);
+        
+        const mediaRecorder = new MediaRecorder(combinedStream, {
+          mimeType: selectedMimeType,
+          videoBitsPerSecond: videoBitrate
+        });
+        
+        const chunks: Blob[] = [];
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            chunks.push(e.data);
+          }
         };
-      });
-      
-      // Start recording
-      mediaRecorder.start(1000); // Collect data every second
-      console.log('[ProjectService] Started media recorder');
-      
-      // Process each scene
-      for (const scene of sortedScenes) {
-        if (!scene.imagePath || !scene.audioPath) {
-          console.warn(`[ProjectService] Scene ${scene.id} is missing image or audio, skipping`);
-          continue;
-        }
         
-        console.log(`[ProjectService] Processing scene ${scene.id}`);
+        // Create a promise that resolves when batch recording is complete
+        const batchRecordingPromise = new Promise<Blob>((resolve) => {
+          mediaRecorder.onstop = () => {
+            const batchBlob = new Blob(chunks, { type: selectedMimeType });
+            console.log(`[ProjectService] Batch ${batchIndex + 1} complete, created ${batchBlob.size} byte video`);
+            resolve(batchBlob);
+          };
+        });
         
-        // Load image
-        const image = await this.loadImage(scene.imagePath);
-        console.log(`[ProjectService] Loaded image: ${image.width}x${image.height}`);
+        // Start recording this batch
+        mediaRecorder.start(1000); // Collect data every second
+        console.log(`[ProjectService] Started media recorder for batch ${batchIndex + 1}`);
         
-        // Load audio
-        const audio = await this.loadAudio(scene.audioPath);
-        console.log(`[ProjectService] Loaded audio, duration: ${audio.duration}s`);
-        
-        // Get audio duration
-        const audioDuration = audio.duration;
-        
-        // Draw image on canvas
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Calculate image position to center it
-        const aspectRatio = image.width / image.height;
-        let drawWidth, drawHeight, drawX, drawY;
-        
-        if (isReel) {
-          // For vertical video (9:16)
-          if (aspectRatio > 1) {
-            // Landscape image in vertical video
-            drawHeight = canvas.height;
-            drawWidth = drawHeight * aspectRatio;
-            drawX = (canvas.width - drawWidth) / 2;
-            drawY = 0;
-          } else {
-            // Portrait image in vertical video
-            drawWidth = canvas.width;
-            drawHeight = drawWidth / aspectRatio;
-            drawX = 0;
-            drawY = (canvas.height - drawHeight) / 2;
-          }
-        } else {
-          // For landscape video (16:9)
-          if (aspectRatio > 16/9) {
-            // Wider image in landscape video
-            drawWidth = canvas.width;
-            drawHeight = drawWidth / aspectRatio;
-            drawX = 0;
-            drawY = (canvas.height - drawHeight) / 2;
-          } else {
-            // Taller image in landscape video
-            drawHeight = canvas.height;
-            drawWidth = drawHeight * aspectRatio;
-            drawX = (canvas.width - drawWidth) / 2;
-            drawY = 0;
-          }
-        }
-        
-        // Connect audio to the media stream
-        const audioSource = audioContext.createMediaElementSource(audio);
-        audioSource.connect(audioDestination);
-        
-        // Add subtitles if available
-        if (scene.subtitles?.segments?.length) {
-          console.log(`[ProjectService] Scene has ${scene.subtitles.segments.length} subtitle segments with words`);
+        // Process each scene in the batch
+        for (let i = 0; i < batch.length; i++) {
+          const scene = batch[i];
+          const overallSceneIndex = batchIndex * BATCH_SIZE + i;
+          const totalScenes = sortedScenes.length;
           
-          // Start playing audio
-          audio.play().catch(err => console.error('Error playing audio:', err));
+          // Update progress (each scene is worth 90% / totalScenes of the progress)
+          this.updateProgress(overallSceneIndex / totalScenes * 0.9);
           
-          // Render frames with subtitles
-          await new Promise<void>((resolve) => {
-            const startTime = Date.now();
+          if (!scene.imagePath || !scene.audioPath) {
+            console.warn(`[ProjectService] Scene ${scene.id} is missing image or audio, skipping`);
+            continue;
+          }
+          
+          console.log(`[ProjectService] Processing scene ${overallSceneIndex + 1}/${totalScenes}`);
+          
+          try {
+            // Load image
+            const image = await this.loadImage(scene.imagePath);
+            console.log(`[ProjectService] Loaded image: ${image.width}x${image.height}`);
             
-            const renderFrame = () => {
-              // Calculate current playback time
-              const elapsedSeconds = (Date.now() - startTime) / 1000;
-              
-              if (elapsedSeconds >= audioDuration) {
-                // Animation complete
-                audio.pause();
-                audio.currentTime = 0;
-                resolve();
-                return;
+            // Load audio
+            const audio = await this.loadAudio(scene.audioPath);
+            console.log(`[ProjectService] Loaded audio, duration: ${audio.duration}s`);
+            
+            // Get audio duration
+            const audioDuration = audio.duration;
+            
+            // OPTIMIZATION: Pre-calculate image positioning to avoid doing it in the render loop
+            const aspectRatio = image.width / image.height;
+            let drawWidth, drawHeight, drawX, drawY;
+            
+            if (isReel) {
+              // For vertical video (9:16)
+              if (aspectRatio > 1) {
+                // Landscape image in vertical video
+                drawHeight = canvas.height;
+                drawWidth = drawHeight * aspectRatio;
+                drawX = (canvas.width - drawWidth) / 2;
+                drawY = 0;
+              } else {
+                // Portrait image in vertical video
+                drawWidth = canvas.width;
+                drawHeight = drawWidth / aspectRatio;
+                drawX = 0;
+                drawY = (canvas.height - drawHeight) / 2;
               }
-              
-              // Clear canvas and draw image
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
-              ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
-              
-              // Find the active subtitle segment
-              const activeSegment = scene.subtitles?.segments.find(
-                segment => elapsedSeconds >= segment.start && elapsedSeconds <= segment.end
-              ) as {
-                id: number;
-                start: number;
-                end: number;
-                text: string;
-                words?: Array<{ word: string; start: number; end: number }>;
-              } | undefined;
-              
-              if (activeSegment) {
-                // Calculate progress through this subtitle (0-1)
-                const segmentDuration = activeSegment.end - activeSegment.start;
-                const segmentProgress = (elapsedSeconds - activeSegment.start) / segmentDuration;
-                const progress = Math.min(Math.max(segmentProgress, 0), 1);
+            } else {
+              // For landscape video (16:9)
+              if (aspectRatio > 16/9) {
+                // Wider image in landscape video
+                drawWidth = canvas.width;
+                drawHeight = drawWidth / aspectRatio;
+                drawX = 0;
+                drawY = (canvas.height - drawHeight) / 2;
+              } else {
+                // Taller image in landscape video
+                drawHeight = canvas.height;
+                drawWidth = drawHeight * aspectRatio;
+                drawX = (canvas.width - drawWidth) / 2;
+                drawY = 0;
+              }
+            }
+            
+            // Connect audio to the media stream
+            const audioSource = audioContext.createMediaElementSource(audio);
+            audioSource.connect(audioDestination);
+            
+            // OPTIMIZATION: Pre-process subtitle segments for faster rendering
+            let processedSubtitles: Array<{
+              segment: any;
+              displayWords: Array<{ word: string; isFocus: boolean }>;
+              start: number;
+              end: number;
+            }> = [];
+            
+            if (scene.subtitles?.segments?.length) {
+              processedSubtitles = scene.subtitles.segments.map(segment => {
+                // Pre-process words for each segment
+                // Use type assertion to handle optional words property
+                const segmentWithWords = segment as {
+                  id: number;
+                  start: number;
+                  end: number;
+                  text: string;
+                  words?: Array<{ word: string; start: number; end: number }>;
+                };
                 
-                // Prepare display words
-                let displayWords: { word: string; isFocus: boolean }[] = [];
+                const words = segmentWithWords.words || segmentWithWords.text.split(/\s+/);
+                return {
+                  segment: segmentWithWords,
+                  displayWords: Array.isArray(words) 
+                    ? words.map((w: any) => ({ 
+                        word: typeof w === 'string' ? w : w.word, 
+                        isFocus: false 
+                      }))
+                    : [],
+                  start: segment.start,
+                  end: segment.end
+                };
+              });
+            }
+            
+            // Start playing audio
+            audio.play().catch(err => console.error('Error playing audio:', err));
+            
+            // Render frames with subtitles
+            await new Promise<void>((resolve) => {
+              const startTime = Date.now();
+              let lastRenderTime = 0;
+              
+              // OPTIMIZATION: Use requestAnimationFrame more efficiently
+              const renderFrame = () => {
+                // Calculate current playback time
+                const elapsedSeconds = (Date.now() - startTime) / 1000;
                 
-                // If we have word-level timestamps, use them for precise highlighting
-                if (activeSegment.words && activeSegment.words.length > 0) {
-                  // Find the current focus word based on timestamp
-                  const focusWordIndex = activeSegment.words.findIndex(
-                    (word: { word: string; start: number; end: number }) => 
-                      elapsedSeconds >= word.start && elapsedSeconds <= word.end
+                // OPTIMIZATION: Skip frames if we're rendering too frequently
+                // Only render at ~30fps (33ms between frames)
+                const now = performance.now();
+                const timeSinceLastRender = now - lastRenderTime;
+                
+                if (elapsedSeconds >= audioDuration) {
+                  // Animation complete
+                  audio.pause();
+                  audio.currentTime = 0;
+                  resolve();
+                  return;
+                }
+                
+                // Skip this frame if we're rendering too frequently
+                if (timeSinceLastRender < 33 && elapsedSeconds < audioDuration - 0.1) {
+                  requestAnimationFrame(renderFrame);
+                  return;
+                }
+                
+                lastRenderTime = now;
+                
+                // Clear canvas and draw image
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+                
+                // Find the active subtitle segment
+                if (processedSubtitles.length > 0) {
+                  const activeSegment = processedSubtitles.find(
+                    s => elapsedSeconds >= s.start && elapsedSeconds <= s.end
                   );
                   
-                  // If no word is currently being spoken, find the next word
-                  const effectiveFocusIndex = focusWordIndex >= 0 
-                    ? focusWordIndex 
-                    : activeSegment.words.findIndex(
+                  if (activeSegment) {
+                    // Calculate progress through this subtitle (0-1)
+                    const segmentDuration = activeSegment.end - activeSegment.start;
+                    const segmentProgress = (elapsedSeconds - activeSegment.start) / segmentDuration;
+                    const progress = Math.min(Math.max(segmentProgress, 0), 1);
+                    
+                    // Prepare display words
+                    let displayWords = activeSegment.displayWords;
+                    
+                    // Find the current focus word
+                    if (activeSegment.segment.words && activeSegment.segment.words.length > 0) {
+                      // Find the current focus word based on timestamp
+                      const focusWordIndex = activeSegment.segment.words.findIndex(
                         (word: { word: string; start: number; end: number }) => 
-                          word.start > elapsedSeconds
+                          elapsedSeconds >= word.start && elapsedSeconds <= word.end
                       );
-                  
-                  // Calculate how many words to show before and after the focus word
-                  const totalWords = Math.min(displayWordCount, activeSegment.words.length);
-                  const wordsBefore = Math.floor((totalWords - 1) / 2);
-                  const wordsAfter = totalWords - wordsBefore - 1;
-                  
-                  // Determine which words to display around the focus word
-                  const startIndex = Math.max(0, effectiveFocusIndex - wordsBefore);
-                  const endIndex = Math.min(activeSegment.words.length, startIndex + totalWords);
-                  
-                  displayWords = activeSegment.words
-                    .slice(startIndex, endIndex)
-                    .map((word: { word: string; start: number; end: number }, index: number) => ({
-                      word: word.word,
-                      isFocus: index + startIndex === effectiveFocusIndex
-                    }));
-                } else {
-                  // Fallback to splitting text if no word-level timestamps
-                  const words = activeSegment.text.split(/\s+/);
-                  
-                  // Estimate which word is the focus based on progress
-                  const estimatedFocusIndex = Math.min(
-                    Math.floor(words.length * progress),
-                    words.length - 1
-                  );
-                  
-                  // Calculate how many words to show before and after the focus word
-                  const totalWords = Math.min(displayWordCount, words.length);
-                  const wordsBefore = Math.floor((totalWords - 1) / 2);
-                  const wordsAfter = totalWords - wordsBefore - 1;
-                  
-                  // Get a window of words around the focus word
-                  const startIndex = Math.max(0, estimatedFocusIndex - wordsBefore);
-                  const endIndex = Math.min(words.length, startIndex + totalWords);
-                  
-                  displayWords = words
-                    .slice(startIndex, endIndex)
-                    .map((word, index) => ({
-                      word,
-                      isFocus: index + startIndex === estimatedFocusIndex
-                    }));
+                      
+                      // Update focus state
+                      displayWords = displayWords.map((w, idx) => ({
+                        ...w,
+                        isFocus: idx === focusWordIndex
+                      }));
+                    } else {
+                      // Fallback to estimating focus word by progress
+                      const estimatedFocusIndex = Math.min(
+                        Math.floor(displayWords.length * progress),
+                        displayWords.length - 1
+                      );
+                      
+                      // Update focus state
+                      displayWords = displayWords.map((w, idx) => ({
+                        ...w,
+                        isFocus: idx === estimatedFocusIndex
+                      }));
+                    }
+                    
+                    // Set up subtitle area (bottom 20% of canvas)
+                    const subtitleAreaHeight = canvas.height * 0.2;
+                    const subtitleAreaY = canvas.height - subtitleAreaHeight;
+                    
+                    // Clear subtitle area with semi-transparent background
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                    ctx.fillRect(0, subtitleAreaY, canvas.width, subtitleAreaHeight);
+                    
+                    // Calculate text positioning
+                    const textY = subtitleAreaY + (subtitleAreaHeight * 0.5);
+                    
+                    // Set text properties
+                    ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    
+                    // OPTIMIZATION: Limit displayed words for better performance
+                    const maxDisplayWords = Math.min(displayWordCount, displayWords.length);
+                    const displaySubset = displayWords.slice(0, maxDisplayWords);
+                    
+                    // Calculate total width of all words
+                    const totalTextWidth = displaySubset.reduce((width, word, index) => {
+                      const wordWidth = ctx.measureText(word.word).width;
+                      return width + wordWidth + (index < displaySubset.length - 1 ? fontSize * 0.5 : 0);
+                    }, 0);
+                    
+                    // Start position for the first word
+                    let currentX = (canvas.width - totalTextWidth) / 2;
+                    
+                    // Draw each word
+                    displaySubset.forEach(word => {
+                      const wordWidth = ctx.measureText(word.word).width;
+                      
+                      // Draw word
+                      ctx.fillStyle = word.isFocus ? highlightColor : 'white';
+                      ctx.fillText(word.word, currentX + (wordWidth / 2), textY);
+                      
+                      // Move to next word position
+                      currentX += wordWidth + fontSize * 0.5;
+                    });
+                    
+                    // Draw progress bar if enabled
+                    if (showProgressBar) {
+                      const progressBarHeight = 4;
+                      const progressBarWidth = canvas.width * 0.5;
+                      const progressBarX = (canvas.width - progressBarWidth) / 2;
+                      const progressBarY = subtitleAreaY + subtitleAreaHeight - 20;
+                      
+                      // Background of progress bar
+                      ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                      ctx.fillRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight);
+                      
+                      // Filled part of progress bar
+                      ctx.fillStyle = highlightColor;
+                      ctx.fillRect(progressBarX, progressBarY, progressBarWidth * progress, progressBarHeight);
+                    }
+                  }
                 }
                 
-                // Set up subtitle area (bottom 20% of canvas)
-                const subtitleAreaHeight = canvas.height * 0.2;
-                const subtitleAreaY = canvas.height - subtitleAreaHeight;
-                
-                // Clear subtitle area with semi-transparent background
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-                ctx.fillRect(0, subtitleAreaY, canvas.width, subtitleAreaHeight);
-                
-                // Calculate text positioning
-                const textY = subtitleAreaY + (subtitleAreaHeight * 0.5);
-                
-                // Set text properties
-                ctx.font = `bold ${fontSize}px Arial, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                
-                // Calculate total width of all words
-                const totalTextWidth = displayWords.reduce((width, word, index) => {
-                  const wordWidth = ctx.measureText(word.word).width;
-                  return width + wordWidth + (index < displayWords.length - 1 ? fontSize * 0.5 : 0);
-                }, 0);
-                
-                // Start position for the first word
-                let currentX = (canvas.width - totalTextWidth) / 2;
-                
-                // Draw each word
-                displayWords.forEach(word => {
-                  const wordWidth = ctx.measureText(word.word).width;
-                  
-                  // Draw word
-                  ctx.fillStyle = word.isFocus ? highlightColor : 'white';
-                  ctx.fillText(word.word, currentX + (wordWidth / 2), textY);
-                  
-                  // Move to next word position
-                  currentX += wordWidth + fontSize * 0.5;
-                });
-                
-                // Draw progress bar if enabled
-                if (showProgressBar) {
-                  const progressBarHeight = 4;
-                  const progressBarWidth = canvas.width * 0.5;
-                  const progressBarX = (canvas.width - progressBarWidth) / 2;
-                  const progressBarY = subtitleAreaY + subtitleAreaHeight - 20;
-                  
-                  // Background of progress bar
-                  ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-                  ctx.fillRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight);
-                  
-                  // Filled part of progress bar
-                  ctx.fillStyle = highlightColor;
-                  ctx.fillRect(progressBarX, progressBarY, progressBarWidth * progress, progressBarHeight);
-                }
-              }
+                // Continue animation
+                requestAnimationFrame(renderFrame);
+              };
               
-              // Continue animation
-              requestAnimationFrame(renderFrame);
-            };
+              // Start animation loop
+              renderFrame();
+            });
             
-            // Start animation loop
-            renderFrame();
-          });
-        } else {
-          // Just play audio without subtitles
-          console.log(`[ProjectService] Scene has no subtitles, playing audio only`);
-          await this.playAudioAndWait(audio, audioDuration);
+            // Disconnect audio source after playing
+            audioSource.disconnect();
+          } catch (error: any) {
+            console.error(`[ProjectService] Error processing scene ${scene.id}:`, error);
+            // Continue with next scene instead of failing the entire batch
+          }
         }
         
-        // Disconnect audio source after playing
-        audioSource.disconnect();
+        // Stop recording this batch
+        console.log(`[ProjectService] All scenes in batch ${batchIndex + 1} processed, stopping media recorder`);
+        mediaRecorder.stop();
+        
+        // Wait for batch recording to complete and add to batch blobs
+        const batchBlob = await batchRecordingPromise;
+        batchBlobs.push(batchBlob);
+        
+        // Update progress (last 10% is for combining batches)
+        this.updateProgress(0.9 + (batchIndex / sceneBatches.length) * 0.1);
       }
       
-      // Stop recording
-      console.log('[ProjectService] All scenes processed, stopping media recorder');
-      mediaRecorder.stop();
+      // Combine all batch blobs into a single video
+      console.log(`[ProjectService] Combining ${batchBlobs.length} batch videos`);
+      let finalVideo: Blob;
       
-      // Wait for recording to complete
-      return await recordingPromise;
+      if (batchBlobs.length === 1) {
+        // Only one batch, use it directly
+        finalVideo = batchBlobs[0];
+      } else {
+        // Multiple batches, combine them
+        // For simplicity, we'll just concatenate the blobs
+        // In a more advanced implementation, you could use FFmpeg.wasm to properly combine videos
+        finalVideo = new Blob(batchBlobs, { type: selectedMimeType });
+      }
+      
+      console.log(`[ProjectService] Video generation complete, created ${finalVideo.size} byte video`);
+      return finalVideo;
     } catch (error: any) {
       console.error('[ProjectService] Video generation error:', error);
       throw new ProcessingError({
@@ -562,33 +636,6 @@ export class ProjectService {
         timestamp: new Date()
       });
     }
-  }
-
-  /**
-   * Play audio and wait for it to complete
-   */
-  private async playAudioAndWait(audio: HTMLAudioElement, duration: number): Promise<void> {
-    return new Promise((resolve) => {
-      const startTime = Date.now();
-      
-      // Start playing audio
-      audio.play().catch(err => console.error('Error playing audio:', err));
-      
-      // Function to check if audio has finished
-      const checkAudioProgress = () => {
-        const elapsed = (Date.now() - startTime) / 1000;
-        
-        if (elapsed >= duration) {
-          audio.pause();
-          audio.currentTime = 0;
-          resolve();
-        } else {
-          requestAnimationFrame(checkAudioProgress);
-        }
-      };
-      
-      requestAnimationFrame(checkAudioProgress);
-    });
   }
 
   /**

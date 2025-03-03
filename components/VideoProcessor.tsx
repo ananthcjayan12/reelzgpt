@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, FormEvent } from 'react';
 import { useProjectActions, useProcessingState, useScenes, useCurrentProject } from '@/lib/store';
 import { ProjectService } from '@/lib/services/project';
 import { getOrCreateTranscription } from '@/lib/services/youtube';
-import { Scene } from '@/types';
+import { Scene, ProgressStatus } from '@/types';
 import { ScenePreview } from '@/components/ScenePreview';
 import { ProjectList } from '@/components/ProjectList';
 import { generateAudio } from '@/lib/services/openai';
@@ -508,6 +508,15 @@ export function VideoProcessor() {
         return;
       }
 
+      // Check if there are too many scenes for mobile
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      if (isMobile && scenes.length > 8) {
+        const proceed = window.confirm(
+          `You're trying to generate a video with ${scenes.length} scenes on a mobile device. This may cause performance issues or browser crashes. Continue anyway?`
+        );
+        if (!proceed) return;
+      }
+
       setIsGeneratingVideo(true);
       setVideoGenerationProgress({ stage: 'preparing', progress: 0 });
       console.log('[VideoProcessor] Starting video generation process...', {
@@ -516,90 +525,100 @@ export function VideoProcessor() {
         numberOfScenes: scenes.length
       });
 
-      // Simulate progress updates for different stages
-      const updateProgress = (stage: 'preparing' | 'processing' | 'finalizing', progress: number) => {
-        console.log(`[VideoProcessor] ${stage.charAt(0).toUpperCase() + stage.slice(1)} progress: ${progress}%`);
-        setVideoGenerationProgress({ stage, progress });
+      // Set up progress tracking
+      const progressHandler = (progress: number) => {
+        let stage: 'preparing' | 'processing' | 'finalizing';
+        
+        // Map progress to stages
+        if (progress < 0.1) {
+          stage = 'preparing';
+        } else if (progress < 0.9) {
+          stage = 'processing';
+        } else {
+          stage = 'finalizing';
+        }
+        
+        setVideoGenerationProgress({ 
+          stage, 
+          progress: stage === 'processing' 
+            ? ((progress - 0.1) / 0.8) * 100 
+            : (stage === 'preparing' ? progress * 10 * 100 : (progress - 0.9) * 10 * 100)
+        });
       };
-
-      // Preparing stage
-      updateProgress('preparing', 0);
-      console.log('[VideoProcessor] Preparing assets for video generation...');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      updateProgress('preparing', 100);
-
-      // Processing stage
-      updateProgress('processing', 0);
-      const totalScenes = scenes.length;
-      console.log('[VideoProcessor] Beginning scene processing...');
       
-      for (let i = 0; i < totalScenes; i++) {
-        console.log(`[VideoProcessor] Processing scene ${i + 1}/${totalScenes}`, {
-          sceneId: scenes[i].id,
-          audioPath: scenes[i].audioPath,
-          imagePath: scenes[i].imagePath,
-          hasSubtitles: !!scenes[i].subtitles
+      // Use the project service's progress callback
+      projectService.setProgressCallback(progressHandler);
+
+      try {
+        // Generate video with timeout protection
+        const timeoutPromise = new Promise<Blob>((_, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error('Video generation timed out. Try with fewer scenes or a desktop browser.'));
+          }, 180000); // 3 minute timeout
+          return () => clearTimeout(timeout);
         });
         
-        await new Promise(resolve => setTimeout(resolve, 500));
-        updateProgress('processing', ((i + 1) / totalScenes) * 100);
+        const videoPromise = projectService.generateVideo(scenes, currentProject);
+        const video = await Promise.race([videoPromise, timeoutPromise]);
+        
+        // Create video URL for preview
+        if (generatedVideoUrl) {
+          console.log('[VideoProcessor] Revoking previous video URL');
+          URL.revokeObjectURL(generatedVideoUrl);
+        }
+        const videoUrl = URL.createObjectURL(video);
+        console.log('[VideoProcessor] Created new video URL for preview');
+        setGeneratedVideoUrl(videoUrl);
+        
+        // Create download link
+        const projectTitle = currentProject.title || 'generated-video';
+        const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+        const timestamp = new Date().toISOString().split('T')[0];
+        
+        // Determine file extension based on MIME type
+        const getFileExtension = (mimeType: string) => {
+          if (mimeType.includes('mp4')) return 'mp4';
+          if (mimeType.includes('webm')) return 'webm';
+          return 'mp4'; // Default to mp4 as a fallback
+        };
+        
+        const fileExtension = getFileExtension(video.type);
+        const filename = `${safeTitle}-${timestamp}.${fileExtension}`;
+        
+        console.log('[VideoProcessor] Initiating video download', { filename, type: video.type });
+        const a = document.createElement('a');
+        a.href = videoUrl;
+        a.download = filename;
+        
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        console.log('[VideoProcessor] Video generation and download process complete');
+      } catch (error: any) {
+        console.error('[VideoProcessor] Error during video generation:', {
+          error,
+          message: error.message,
+          stack: error.stack
+        });
+        alert(`Failed to generate video: ${error.message}`);
+        setError({
+          stage: 'video-processing',
+          message: error.message,
+          details: error,
+          timestamp: new Date(),
+        });
+      } finally {
+        // Clean up progress handler
+        projectService.setProgressCallback(null);
       }
-
-      // Finalizing stage
-      console.log('[VideoProcessor] All scenes processed, starting video generation...');
-      updateProgress('finalizing', 0);
-      
-      console.log('[VideoProcessor] Calling project service to generate video...');
-      const video = await projectService.generateVideo(scenes, currentProject);
-      console.log('[VideoProcessor] Video blob received from project service', {
-        size: video.size,
-        type: video.type
-      });
-      
-      updateProgress('finalizing', 100);
-      
-      // Create video URL for preview
-      if (generatedVideoUrl) {
-        console.log('[VideoProcessor] Revoking previous video URL');
-        URL.revokeObjectURL(generatedVideoUrl);
-      }
-      const videoUrl = URL.createObjectURL(video);
-      console.log('[VideoProcessor] Created new video URL for preview');
-      setGeneratedVideoUrl(videoUrl);
-      
-      // Create download link
-      const projectTitle = currentProject.title || 'generated-video';
-      const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-      const timestamp = new Date().toISOString().split('T')[0];
-      
-      // Determine file extension based on MIME type
-      const getFileExtension = (mimeType: string) => {
-        if (mimeType.includes('mp4')) return 'mp4';
-        if (mimeType.includes('webm')) return 'webm';
-        return 'mp4'; // Default to mp4 as a fallback
-      };
-      
-      const fileExtension = getFileExtension(video.type);
-      const filename = `${safeTitle}-${timestamp}.${fileExtension}`;
-      
-      console.log('[VideoProcessor] Initiating video download', { filename, type: video.type });
-      const a = document.createElement('a');
-      a.href = videoUrl;
-      a.download = filename;
-      
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      
-      console.log('[VideoProcessor] Video generation and download process complete');
-
     } catch (error: any) {
-      console.error('[VideoProcessor] Error during video generation:', {
+      console.error('[VideoProcessor] Error during video generation setup:', {
         error,
         message: error.message,
         stack: error.stack
       });
-      alert(`Failed to generate video: ${error.message}`);
+      alert(`Failed to set up video generation: ${error.message}`);
       setError({
         stage: 'video-processing',
         message: error.message,
