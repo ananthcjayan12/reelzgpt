@@ -14,6 +14,12 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
   output: 'standalone',
+  // Make sure the app works with or without a trailing slash
+  trailingSlash: false,
+  // Ensure we're properly handling production environment
+  productionBrowserSourceMaps: false,
+  // Ensure we're properly handling static assets
+  poweredByHeader: false,
   webpack: (config, { isServer }) => {
     // Fixes npm packages that depend on `fs` module
     if (!isServer) {
