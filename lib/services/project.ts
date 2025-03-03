@@ -376,9 +376,11 @@ export class ProjectService {
         // Use the actual audio time instead of calculating from frame number
         const currentTime = actualAudioTime;
         
-        // Get subtitle settings
+        // Get subtitle settings from the store
         const subtitleSettings = useSettingsStore.getState().subtitleSettings;
-        const fontSize = subtitleSettings.fontSize || 32;
+        const fontSize = subtitleSettings.fontSize || 32; // Use the font size from settings
+        const wordsToDisplay = subtitleSettings.displayWordCount || 5;
+        const highlightColor = subtitleSettings.highlightColor || '#FF0000';
         
         // Find the subtitle segments for this scene
         const subtitles = asset.scene.subtitles;
@@ -410,62 +412,89 @@ export class ProjectService {
           return; // No words with timing data
         }
         
-        // Find all words that should be visible at the current time
-        const visibleWords = allWords.filter(word => 
-          currentTime >= word.start && currentTime <= word.end + 0.3 // Add small buffer
-        );
+        // Find the current word based on the current time
+        let currentWordIndex = -1;
         
-        if (visibleWords.length === 0) {
-          // If no words are exactly at this time, show the most recent word
-          let mostRecentWord = allWords[0];
+        // First try to find an exact match (word being spoken right now)
+        for (let i = 0; i < allWords.length; i++) {
+          if (currentTime >= allWords[i].start && currentTime <= allWords[i].end) {
+            currentWordIndex = i;
+            break;
+          }
+        }
+        
+        // If no exact match, find the most recent word
+        if (currentWordIndex === -1) {
           let smallestTimeDiff = Number.MAX_VALUE;
           
-          for (const word of allWords) {
-            if (word.start <= currentTime) {
-              const timeDiff = currentTime - word.start;
+          for (let i = 0; i < allWords.length; i++) {
+            if (allWords[i].start <= currentTime) {
+              const timeDiff = currentTime - allWords[i].start;
               if (timeDiff < smallestTimeDiff) {
                 smallestTimeDiff = timeDiff;
-                mostRecentWord = word;
+                currentWordIndex = i;
               }
             }
           }
-          
-          visibleWords.push(mostRecentWord);
         }
         
-        // Create the text to display
-        const displayText = visibleWords.map(w => w.word).join(' ');
-        
-        // Set up text rendering
-        ctx.font = `${fontSize}px Arial`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        
-        // Calculate text position (centered at bottom of canvas with padding)
-        const textX = canvas.width / 2;
-        const textY = canvas.height - 20; // 20px padding from bottom
-        
-        // Measure text for background
-        const textMetrics = ctx.measureText(displayText);
-        const textWidth = textMetrics.width;
-        const textHeight = fontSize;
-        
-        // Draw semi-transparent background for better readability
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(
-          textX - textWidth / 2 - 10,
-          textY - textHeight - 10,
-          textWidth + 20,
-          textHeight + 20
-        );
-        
-        // Draw the text
-        ctx.fillStyle = 'white';
-        ctx.fillText(displayText, textX, textY);
-        
-        // Add debugging information
-        if (frameNumber % 30 === 0) { // Only log every 30 frames to reduce spam
-          console.log(`[Subtitle Debug] Time: ${currentTime.toFixed(2)}s, Words: "${displayText}"`);
+        // If we found a word, display it and surrounding words based on wordsToDisplay setting
+        if (currentWordIndex >= 0) {
+          // Determine the range of words to display
+          const halfCount = Math.floor(wordsToDisplay / 2);
+          const startWordIndex = Math.max(0, currentWordIndex - halfCount);
+          const endWordIndex = Math.min(allWords.length - 1, startWordIndex + wordsToDisplay - 1);
+          
+          // Set up text rendering with the font size from settings
+          ctx.font = `${fontSize}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          
+          // Calculate text position (centered at bottom of canvas with padding)
+          const textX = canvas.width / 2;
+          const textY = canvas.height - 20; // 20px padding from bottom
+          
+          // Draw semi-transparent background for better readability
+          // First measure the total text width to create the background
+          let totalTextWidth = 0;
+          for (let i = startWordIndex; i <= endWordIndex; i++) {
+            totalTextWidth += ctx.measureText(allWords[i].word + ' ').width;
+          }
+          
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+          ctx.fillRect(
+            textX - totalTextWidth / 2 - 10,
+            textY - fontSize - 10,
+            totalTextWidth + 20,
+            fontSize + 20
+          );
+          
+          // Draw each word individually to apply highlighting to the current word
+          let currentX = textX - totalTextWidth / 2;
+          
+          for (let i = startWordIndex; i <= endWordIndex; i++) {
+            const word = allWords[i].word;
+            const wordWidth = ctx.measureText(word + ' ').width;
+            
+            // Set color based on whether this is the current word
+            if (i === currentWordIndex) {
+              ctx.fillStyle = highlightColor; // Use highlight color for the current word
+            } else {
+              ctx.fillStyle = 'white'; // Use white for other words
+            }
+            
+            // Draw the word
+            ctx.textAlign = 'left';
+            ctx.fillText(word + ' ', currentX, textY);
+            
+            // Move to the next word position
+            currentX += wordWidth;
+          }
+          
+          // Add debugging information
+          if (frameNumber % 30 === 0) { // Only log every 30 frames to reduce spam
+            console.log(`[Subtitle Debug] Time: ${currentTime.toFixed(2)}s, Current Word: "${allWords[currentWordIndex].word}", Word Start: ${allWords[currentWordIndex].start.toFixed(2)}s, Word End: ${allWords[currentWordIndex].end.toFixed(2)}s, Font Size: ${fontSize}, Highlight Color: ${highlightColor}`);
+          }
         }
       };
       

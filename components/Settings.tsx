@@ -379,12 +379,14 @@ export function Settings() {
                 <div className="aspect-video bg-black rounded-lg flex items-center justify-center">
                   <div className="text-white text-center space-y-2 p-4">
                     <div 
-                      className="subtitle-text max-w-[80%] mx-auto"
+                      className="subtitle-text max-w-[80%] mx-auto bg-black/50 p-3 rounded"
                       style={{ fontSize: `${subtitleSettings.fontSize}px` }}
                     >
-                      <span>This is a</span>{' '}
-                      <span style={{ color: subtitleSettings.highlightColor }}>sample</span>{' '}
-                      <span>text</span>
+                      <span>This is a </span>
+                      <span style={{ color: subtitleSettings.highlightColor }}>sample</span>
+                      <span> text with </span>
+                      <span>highlighted </span>
+                      <span>words</span>
                     </div>
                     {subtitleSettings.showProgressBar && (
                       <div className="w-48 h-1 bg-white/30 rounded mx-auto">
