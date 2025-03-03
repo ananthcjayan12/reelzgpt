@@ -217,35 +217,84 @@ export class ProjectService {
         frameCount?: number;
       }
       
-      const sceneAssets = await Promise.all(
-        sortedScenes.map(async (scene) => {
-          try {
-            if (!scene.imagePath || !scene.audioPath) {
+      // MOBILE OPTIMIZATION: Load assets in batches for mobile to reduce memory pressure
+      let validSceneAssets: SceneAsset[] = [];
+      
+      if (isMobile && sortedScenes.length > 3) {
+        // For mobile, load assets in smaller batches to reduce memory pressure
+        console.log('[ProjectService] Mobile detected, loading assets in batches');
+        
+        // Process in batches of 2 scenes at a time for mobile
+        const batchSize = 2;
+        for (let i = 0; i < sortedScenes.length; i += batchSize) {
+          const batch = sortedScenes.slice(i, i + batchSize);
+          console.log(`[ProjectService] Loading batch ${i/batchSize + 1}/${Math.ceil(sortedScenes.length/batchSize)}`);
+          
+          const batchAssets = await Promise.all(
+            batch.map(async (scene) => {
+              try {
+                if (!scene.imagePath || !scene.audioPath) {
+                  return { scene, image: null, audio: null, audioDuration: 0, success: false } as SceneAsset;
+                }
+                
+                // Load image and audio in parallel
+                const [image, audio] = await Promise.all([
+                  this.loadImage(scene.imagePath),
+                  this.loadAudio(scene.audioPath)
+                ]);
+                
+                return {
+                  scene,
+                  image,
+                  audio,
+                  audioDuration: audio.duration,
+                  success: true
+                } as SceneAsset;
+              } catch (error) {
+                console.error(`[ProjectService] Failed to load assets for scene ${scene.id}:`, error);
+                return { scene, image: null, audio: null, audioDuration: 0, success: false } as SceneAsset;
+              }
+            })
+          );
+          
+          // Add valid assets from this batch
+          validSceneAssets = [...validSceneAssets, ...batchAssets.filter(asset => asset.success)];
+          
+          // Update progress based on how many batches we've loaded
+          this.updateProgress(0.05 + (i / sortedScenes.length) * 0.05);
+        }
+      } else {
+        // For desktop, load all assets at once
+        const sceneAssets = await Promise.all(
+          sortedScenes.map(async (scene) => {
+            try {
+              if (!scene.imagePath || !scene.audioPath) {
+                return { scene, image: null, audio: null, audioDuration: 0, success: false } as SceneAsset;
+              }
+              
+              // Load image and audio in parallel
+              const [image, audio] = await Promise.all([
+                this.loadImage(scene.imagePath),
+                this.loadAudio(scene.audioPath)
+              ]);
+              
+              return {
+                scene,
+                image,
+                audio,
+                audioDuration: audio.duration,
+                success: true
+              } as SceneAsset;
+            } catch (error) {
+              console.error(`[ProjectService] Failed to load assets for scene ${scene.id}:`, error);
               return { scene, image: null, audio: null, audioDuration: 0, success: false } as SceneAsset;
             }
-            
-            // Load image and audio in parallel
-            const [image, audio] = await Promise.all([
-              this.loadImage(scene.imagePath),
-              this.loadAudio(scene.audioPath)
-            ]);
-            
-            return {
-              scene,
-              image,
-              audio,
-              audioDuration: audio.duration,
-              success: true
-            } as SceneAsset;
-          } catch (error) {
-            console.error(`[ProjectService] Failed to load assets for scene ${scene.id}:`, error);
-            return { scene, image: null, audio: null, audioDuration: 0, success: false } as SceneAsset;
-          }
-        })
-      );
-      
-      // Filter out failed assets
-      const validSceneAssets = sceneAssets.filter(asset => asset.success);
+          })
+        );
+        
+        // Filter out failed assets
+        validSceneAssets = sceneAssets.filter(asset => asset.success);
+      }
       
       if (validSceneAssets.length === 0) {
         throw new Error('Failed to load any scene assets');
@@ -263,12 +312,19 @@ export class ProjectService {
         throw new Error('Failed to get canvas context');
       }
       
-      // Set canvas dimensions
-      canvas.width = isReel ? 1080 : 1920;
-      canvas.height = isReel ? 1920 : 1080;
+      // MOBILE OPTIMIZATION: Reduce canvas size for mobile
+      if (isMobile) {
+        // Use smaller canvas dimensions for mobile to reduce memory usage
+        canvas.width = isReel ? 720 : 1280;
+        canvas.height = isReel ? 1280 : 720;
+      } else {
+        // Full resolution for desktop
+        canvas.width = isReel ? 1080 : 1920;
+        canvas.height = isReel ? 1920 : 1080;
+      }
       
       // OPTIMIZATION: Reduce video quality on mobile for better performance
-      const videoBitrate = isMobile ? 2500000 : 5000000;
+      const videoBitrate = isMobile ? 1500000 : 5000000;
       
       // Get supported MIME type
       const getSupportedMimeType = () => {
@@ -296,7 +352,7 @@ export class ProjectService {
       console.log('[ProjectService] Starting frame pre-rendering process');
       
       // Calculate total frames and duration
-      const FPS = isMobile ? 20 : 30; // Lower FPS on mobile
+      const FPS = isMobile ? 15 : 30; // Even lower FPS on mobile
       let totalFrames = 0;
       let totalDuration = 0;
       
@@ -330,6 +386,9 @@ export class ProjectService {
         }
       };
       
+      // MOBILE OPTIMIZATION: For mobile, use smaller data chunks to avoid memory issues
+      const dataAvailableInterval = isMobile ? 500 : 1000; // ms
+      
       // Create a promise that resolves when recording is complete
       const recordingPromise = new Promise<Blob>((resolve) => {
         mediaRecorder.onstop = () => {
@@ -340,11 +399,8 @@ export class ProjectService {
       });
       
       // Start recording
-      mediaRecorder.start(1000);
+      mediaRecorder.start(dataAvailableInterval);
       console.log('[ProjectService] Started media recorder');
-      
-      // OPTIMIZATION: Pre-render frames for each scene
-      let frameIndex = 0;
       
       // Create a function to render a specific frame
       const renderFrame = (asset: SceneAsset, frameNumber: number, actualAudioTime: number) => {
@@ -446,7 +502,9 @@ export class ProjectService {
           const endWordIndex = Math.min(allWords.length - 1, startWordIndex + wordsToDisplay - 1);
           
           // Set up text rendering with the font size from settings
-          ctx.font = `${fontSize}px Arial`;
+          // MOBILE OPTIMIZATION: Scale font size based on canvas size
+          const scaledFontSize = isMobile ? Math.floor(fontSize * 0.75) : fontSize;
+          ctx.font = `${scaledFontSize}px Arial`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'bottom';
           
@@ -464,9 +522,9 @@ export class ProjectService {
           ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
           ctx.fillRect(
             textX - totalTextWidth / 2 - 10,
-            textY - fontSize - 10,
+            textY - scaledFontSize - 10,
             totalTextWidth + 20,
-            fontSize + 20
+            scaledFontSize + 20
           );
           
           // Draw each word individually to apply highlighting to the current word
@@ -491,21 +549,37 @@ export class ProjectService {
             currentX += wordWidth;
           }
           
-          // Add debugging information
-          if (frameNumber % 30 === 0) { // Only log every 30 frames to reduce spam
-            console.log(`[Subtitle Debug] Time: ${currentTime.toFixed(2)}s, Current Word: "${allWords[currentWordIndex].word}", Word Start: ${allWords[currentWordIndex].start.toFixed(2)}s, Word End: ${allWords[currentWordIndex].end.toFixed(2)}s, Font Size: ${fontSize}, Highlight Color: ${highlightColor}`);
+          // MOBILE OPTIMIZATION: Reduce debug logging on mobile
+          if (!isMobile && frameNumber % 30 === 0) { // Only log every 30 frames to reduce spam
+            console.log(`[Subtitle Debug] Time: ${currentTime.toFixed(2)}s, Current Word: "${allWords[currentWordIndex].word}", Word Start: ${allWords[currentWordIndex].start.toFixed(2)}s, Word End: ${allWords[currentWordIndex].end.toFixed(2)}s, Font Size: ${scaledFontSize}, Highlight Color: ${highlightColor}`);
           }
         }
       };
-      
-      // Process each scene sequentially but with optimized frame rendering
-      console.log('[ProjectService] Starting optimized scene processing');
       
       // Create a more efficient processing loop using requestAnimationFrame
       const processScenes = async () => {
         let currentSceneIndex = 0;
         let currentFrameInScene = 0;
         let lastFrameTime = 0;
+        
+        // MOBILE OPTIMIZATION: Add garbage collection helper
+        const gcHelper = () => {
+          // Force garbage collection by nullifying references
+          if (isMobile && currentSceneIndex > 0) {
+            const previousIndex = currentSceneIndex - 1;
+            if (previousIndex >= 0 && previousIndex < validSceneAssets.length) {
+              // Clear references to previous scene assets to help garbage collection
+              if (validSceneAssets[previousIndex].image) {
+                validSceneAssets[previousIndex].image = null;
+              }
+              if (validSceneAssets[previousIndex].audio) {
+                validSceneAssets[previousIndex].audio.src = '';
+                validSceneAssets[previousIndex].audio = null;
+              }
+              console.log(`[ProjectService] Cleared references to scene ${previousIndex} to help garbage collection`);
+            }
+          }
+        };
         
         // Function to process the next frame
         const processNextFrame = async (timestamp: number) => {
@@ -584,32 +658,43 @@ export class ProjectService {
             // Move to the next scene
             currentSceneIndex++;
             currentFrameInScene = 0;
+            
+            // Help garbage collection between scenes
+            gcHelper();
           }
           
-          // Continue the animation loop
-          requestAnimationFrame(processNextFrame);
+          // MOBILE OPTIMIZATION: Add small delay between frames on mobile to prevent UI freezing
+          if (isMobile) {
+            setTimeout(() => {
+              requestAnimationFrame(processNextFrame);
+            }, 10); // Small delay to allow UI thread to breathe
+          } else {
+            // Continue the animation loop immediately on desktop
+            requestAnimationFrame(processNextFrame);
+          }
         };
         
         // Start the processing loop
         requestAnimationFrame(processNextFrame);
       };
       
-      // Start processing and wait for completion
-      await processScenes();
+      // Start processing scenes
+      processScenes();
       
       // Wait for recording to complete
-      this.updateProgress(0.9);
-      console.log('[ProjectService] Finalizing video...');
       const videoBlob = await recordingPromise;
+      
+      // Update progress to 100%
       this.updateProgress(1.0);
       
+      // Return the final video blob
       return videoBlob;
     } catch (error: any) {
-      console.error('[ProjectService] Video generation error:', error);
+      console.error('[ProjectService] Error generating video:', error);
       throw new ProcessingError({
         stage: 'video-generation',
-        message: `Failed to generate video: ${error.message}`,
-        timestamp: new Date()
+        message: error.message || 'Failed to generate video',
+        timestamp: new Date(),
       });
     }
   }

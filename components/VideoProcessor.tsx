@@ -476,175 +476,143 @@ export function VideoProcessor() {
   };
 
   const handleGenerateVideo = async () => {
-    try {
-      if (!scenes || scenes.length === 0 || !currentProject) {
-        console.log('[VideoProcessor] Cannot generate video: No scenes or project available');
-        alert('No scenes available to process');
-        return;
-      }
+    if (!currentProject) {
+      console.error('[VideoProcessor] No current project');
+      return;
+    }
 
-      // Check browser compatibility
-      if (typeof MediaRecorder === 'undefined') {
-        console.warn('[VideoProcessor] MediaRecorder not supported in this browser');
-        alert('Your browser does not support video recording. Please try using a desktop browser like Chrome or Firefox.');
-        return;
-      }
-
-      // Check if all scenes have audio and images
-      console.log('[VideoProcessor] Checking scene readiness...', {
-        totalScenes: scenes.length,
-        scenesStatus: scenes.map(scene => ({
-          id: scene.id,
-          hasAudio: !!(scene.status?.audioGenerated || scene.audioPath),
-          hasImage: !!(scene.status?.imageGenerated || scene.imagePath),
-          hasSubtitles: !!scene.subtitles?.segments?.length
-        }))
-      });
-
-      const allScenesReady = scenes.every(
-        scene => (scene.status?.audioGenerated || scene.audioPath) && 
-                (scene.status?.imageGenerated || scene.imagePath)
+    // Check if all scenes have been processed
+    const unprocessedScenes = scenes.filter(scene => !scene.audioPath || !scene.imagePath);
+    if (unprocessedScenes.length > 0) {
+      const proceed = window.confirm(
+        `Some scenes (${unprocessedScenes.length}) are missing audio or images. Do you want to generate them now?`
       );
-
-      if (!allScenesReady) {
-        console.log('[VideoProcessor] Video generation aborted: Not all scenes have required assets');
-        alert('Please generate all audio and images before creating the video');
+      if (proceed) {
+        await handleGenerateAllAudio();
+        await handleGenerateAllImages();
+      } else {
         return;
       }
+    }
 
-      // Check if there are too many scenes for mobile
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      if (isMobile && scenes.length > 8) {
+    // Check if there are too many scenes for mobile
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile) {
+      // More detailed warning for mobile users
+      if (scenes.length > 8) {
         const proceed = window.confirm(
-          `You're trying to generate a video with ${scenes.length} scenes on a mobile device. This may cause performance issues or browser crashes. Continue anyway?`
+          `You're trying to generate a video with ${scenes.length} scenes on a mobile device. This may cause performance issues or browser crashes.\n\nRecommendations for mobile:\n- Use 5 or fewer scenes for best results\n- Close other browser tabs\n- Ensure your device has sufficient battery\n\nContinue anyway?`
+        );
+        if (!proceed) return;
+      } else if (scenes.length > 5) {
+        // Softer warning for 5-8 scenes
+        const proceed = window.confirm(
+          `You're generating a video with ${scenes.length} scenes on a mobile device. For best results on mobile, we recommend 5 or fewer scenes.\n\nContinue?`
         );
         if (!proceed) return;
       }
+    }
 
-      setIsGeneratingVideo(true);
-      setVideoGenerationProgress({ stage: 'preparing', progress: 0 });
-      console.log('[VideoProcessor] Starting video generation process...', {
-        projectTitle: currentProject.title,
-        videoFormat: currentProject.videoFormat,
-        numberOfScenes: scenes.length
-      });
+    setIsGeneratingVideo(true);
+    setVideoGenerationProgress({ stage: 'preparing', progress: 0 });
+    console.log('[VideoProcessor] Starting video generation process...', {
+      projectTitle: currentProject.title,
+      videoFormat: currentProject.videoFormat,
+      numberOfScenes: scenes.length
+    });
 
-      // Set up progress tracking with enhanced feedback
-      const progressHandler = (progress: number) => {
-        let stage: 'preparing' | 'processing' | 'finalizing';
+    // Set up progress tracking with enhanced feedback
+    const progressHandler = (progress: number) => {
+      let stage: 'preparing' | 'processing' | 'finalizing';
+      
+      // Map progress to stages
+      if (progress < 0.1) {
+        stage = 'preparing';
+        setVideoGenerationProgress({ 
+          stage, 
+          progress: progress * 10 * 100
+        });
+      } else if (progress < 0.9) {
+        stage = 'processing';
         
-        // Map progress to stages
-        if (progress < 0.1) {
-          stage = 'preparing';
-          setVideoGenerationProgress({ 
-            stage, 
-            progress: progress * 10 * 100
-          });
-        } else if (progress < 0.9) {
-          stage = 'processing';
-          
-          // Extract scene information from the progress message if available
-          const { currentScene, totalScenes, sceneProgress } = projectService.getProgressDetails() || {};
-          
-          setVideoGenerationProgress({ 
-            stage, 
-            progress: ((progress - 0.1) / 0.8) * 100,
-            currentScene,
-            totalScenes,
-            sceneProgress
-          });
-        } else {
-          stage = 'finalizing';
-          setVideoGenerationProgress({ 
-            stage, 
-            progress: (progress - 0.9) * 10 * 100
-          });
-        }
+        // Extract scene information from the progress message if available
+        const { currentScene, totalScenes, sceneProgress } = projectService.getProgressDetails() || {};
+        
+        setVideoGenerationProgress({ 
+          stage, 
+          progress: ((progress - 0.1) / 0.8) * 100,
+          currentScene,
+          totalScenes,
+          sceneProgress
+        });
+      } else {
+        stage = 'finalizing';
+        setVideoGenerationProgress({ 
+          stage, 
+          progress: (progress - 0.9) * 10 * 100
+        });
+      }
+    };
+    
+    // Use the project service's progress callback
+    projectService.setProgressCallback(progressHandler);
+
+    try {
+      // Generate video with timeout protection
+      const timeoutPromise = new Promise<Blob>((_, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Video generation timed out. Try with fewer scenes or a desktop browser.'));
+        }, 420000); // 7 minute timeout
+        return () => clearTimeout(timeout);
+      });
+      
+      const videoPromise = projectService.generateVideo(scenes, currentProject);
+      const video = await Promise.race([videoPromise, timeoutPromise]);
+      
+      // Create video URL for preview
+      if (generatedVideoUrl) {
+        console.log('[VideoProcessor] Revoking previous video URL');
+        URL.revokeObjectURL(generatedVideoUrl);
+      }
+      const videoUrl = URL.createObjectURL(video);
+      console.log('[VideoProcessor] Created new video URL for preview');
+      setGeneratedVideoUrl(videoUrl);
+      
+      // Create download link
+      const projectTitle = currentProject.title || 'generated-video';
+      const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+      const timestamp = new Date().toISOString().split('T')[0];
+      
+      // Determine file extension based on MIME type
+      const getFileExtension = (mimeType: string) => {
+        if (mimeType.includes('mp4')) return 'mp4';
+        if (mimeType.includes('webm')) return 'webm';
+        return 'mp4'; // Default to mp4 as a fallback
       };
       
-      // Use the project service's progress callback
-      projectService.setProgressCallback(progressHandler);
-
-      try {
-        // Generate video with timeout protection
-        const timeoutPromise = new Promise<Blob>((_, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error('Video generation timed out. Try with fewer scenes or a desktop browser.'));
-          }, 420000); // 7 minute timeout
-          return () => clearTimeout(timeout);
-        });
-        
-        const videoPromise = projectService.generateVideo(scenes, currentProject);
-        const video = await Promise.race([videoPromise, timeoutPromise]);
-        
-        // Create video URL for preview
-        if (generatedVideoUrl) {
-          console.log('[VideoProcessor] Revoking previous video URL');
-          URL.revokeObjectURL(generatedVideoUrl);
-        }
-        const videoUrl = URL.createObjectURL(video);
-        console.log('[VideoProcessor] Created new video URL for preview');
-        setGeneratedVideoUrl(videoUrl);
-        
-        // Create download link
-        const projectTitle = currentProject.title || 'generated-video';
-        const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-        const timestamp = new Date().toISOString().split('T')[0];
-        
-        // Determine file extension based on MIME type
-        const getFileExtension = (mimeType: string) => {
-          if (mimeType.includes('mp4')) return 'mp4';
-          if (mimeType.includes('webm')) return 'webm';
-          return 'mp4'; // Default to mp4 as a fallback
-        };
-        
-        const fileExtension = getFileExtension(video.type);
-        const filename = `${safeTitle}-${timestamp}.${fileExtension}`;
-        
-        console.log('[VideoProcessor] Initiating video download', { filename, type: video.type });
-        const a = document.createElement('a');
-        a.href = videoUrl;
-        a.download = filename;
-        
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        
-        console.log('[VideoProcessor] Video generation and download process complete');
-      } catch (error: any) {
-        console.error('[VideoProcessor] Error during video generation:', {
-          error,
-          message: error.message,
-          stack: error.stack
-        });
-        alert(`Failed to generate video: ${error.message}`);
-        setError({
-          stage: 'video-processing',
-          message: error.message,
-          details: error,
-          timestamp: new Date(),
-        });
-      } finally {
-        // Clean up progress handler
-        projectService.setProgressCallback(null);
-      }
+      const fileExtension = getFileExtension(video.type);
+      const filename = `${safeTitle}-${timestamp}.${fileExtension}`;
+      
+      console.log('[VideoProcessor] Initiating video download', { filename, type: video.type });
+      const a = document.createElement('a');
+      a.href = videoUrl;
+      a.download = filename;
+      
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     } catch (error: any) {
-      console.error('[VideoProcessor] Error during video generation setup:', {
-        error,
-        message: error.message,
-        stack: error.stack
-      });
-      alert(`Failed to set up video generation: ${error.message}`);
+      console.error('[VideoProcessor] Video generation error:', error);
       setError({
-        stage: 'video-processing',
-        message: error.message,
+        stage: 'video-generation',
+        message: error.message || 'Failed to generate video',
         details: error,
         timestamp: new Date(),
       });
     } finally {
       setIsGeneratingVideo(false);
       setVideoGenerationProgress(null);
-      console.log('[VideoProcessor] Video generation process finished');
+      projectService.setProgressCallback(null);
     }
   };
 
@@ -662,6 +630,7 @@ export function VideoProcessor() {
     if (!videoGenerationProgress) return null;
     
     const { stage, progress, currentScene, totalScenes, sceneProgress } = videoGenerationProgress;
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
     return (
       <div className="w-full space-y-2">
@@ -676,9 +645,15 @@ export function VideoProcessor() {
           <span>{Math.round(progress)}%</span>
         </div>
         <Progress value={progress} className="h-2" />
+        {stage === 'preparing' && progress > 40 && progress < 60 && isMobile && (
+          <p className="text-xs text-amber-500 mt-1">
+            <strong>Mobile device detected:</strong> This stage may take longer on mobile. Please be patient and keep the browser tab open.
+          </p>
+        )}
         {stage === 'processing' && (
           <p className="text-xs text-muted-foreground mt-1">
             This may take several minutes depending on the number of scenes. Please don't close this tab.
+            {isMobile && ' On mobile devices, this process can take significantly longer.'}
           </p>
         )}
       </div>
