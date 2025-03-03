@@ -9,7 +9,7 @@ export function Footer() {
       <div className="container px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto py-6 md:py-8">
         <div className="flex flex-col md:flex-row justify-between items-center gap-6">
           <div>
-            <h3 className="font-medium text-base">YouTube Video Generator</h3>
+            <h3 className="font-medium text-base">ReelzGPT</h3>
             <p className="text-sm text-muted-foreground mt-1">
               Create engaging AI-powered videos
             </p>
@@ -40,7 +40,7 @@ export function Footer() {
         <Separator className="my-6" />
         
         <div className="flex flex-col-reverse md:flex-row justify-between items-center gap-4 text-sm text-muted-foreground">
-          <p>© 2024 YouTube Video Generator</p>
+          <p>© 2024 ReelzGPT</p>
           <div className="flex gap-6">
             <a href="/privacy" className="hover:text-foreground transition-colors">Privacy</a>
             <a href="/terms" className="hover:text-foreground transition-colors">Terms</a>

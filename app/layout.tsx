@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'YouTube Video Generator',
-  description: 'Generate AI videos from YouTube content',
+  title: 'ReelzGPT - AI Video Generator',
+  description: 'Generate AI videos from YouTube content with ReelzGPT',
 };
 
 export default function RootLayout({

@@ -46,7 +46,7 @@ export function MainLayout({ children }: MainLayoutProps) {
                 <SheetContent side="left" className="w-[280px]">
                   <nav className="flex flex-col space-y-6">
                     <a href="/" className="flex items-center space-x-2 font-bold text-lg">
-                      <span>YouTube Video Generator</span>
+                      <span>ReelzGPT</span>
                     </a>
                     <Separator />
                     <div className="flex flex-col space-y-4">
@@ -68,8 +68,8 @@ export function MainLayout({ children }: MainLayoutProps) {
                 </SheetContent>
               </Sheet>
               <a href="/" className="flex items-center space-x-2">
-                <span className="hidden font-bold text-xl sm:inline-block">YouTube Video Generator</span>
-                <span className="font-bold text-xl sm:hidden">YVG</span>
+                <span className="hidden font-bold text-xl sm:inline-block">ReelzGPT</span>
+                <span className="font-bold text-xl sm:hidden">RGP</span>
               </a>
             </div>
 

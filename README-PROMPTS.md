@@ -1,6 +1,6 @@
 # Prompt Templates Guide
 
-This guide explains how to use and customize the prompt templates in the YouTube Video Generator application.
+This guide explains how to use and customize the prompt templates in the ReelzGPT application.
 
 ## Overview
 
