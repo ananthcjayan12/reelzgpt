@@ -564,9 +564,6 @@ export class ProjectService {
         let lastFrameTime = 0;
         let audioSources: AudioNode[] = [];
         
-        // Add a small delay between scenes to ensure smooth transitions
-        const sceneTransitionDelay = 0; // No delay between scenes to avoid gaps
-        
         // Function to process the next frame
         const processNextFrame = async (timestamp: number) => {
           // Skip if we're processing too quickly
@@ -668,28 +665,18 @@ export class ProjectService {
           
           // Check if we've completed the current scene
           if (currentFrameInScene >= frameCount) {
-            // Stop the audio for the current scene
+            // Stop the current audio
             if (asset.audio) {
               try {
                 asset.audio.pause();
-                // Don't set currentTime to 0 here to avoid audio gaps
               } catch (e) {
                 console.error('Error pausing audio:', e);
               }
             }
             
-            // Move to the next scene immediately without delay
+            // Move to the next scene immediately
             currentSceneIndex++;
             currentFrameInScene = 0;
-            
-            // If we're moving to a new scene, add a small transition frame to avoid gaps
-            if (currentSceneIndex < validSceneAssets.length && sceneTransitionDelay > 0) {
-              // Add a small delay before starting the next scene to ensure smooth transition
-              setTimeout(() => {
-                requestAnimationFrame(processNextFrame);
-              }, sceneTransitionDelay);
-              return;
-            }
           }
           
           // Continue the animation loop
@@ -1142,10 +1129,31 @@ export class ProjectService {
           // Connect audio if this is the first frame of the scene
           if (currentFrameInScene === 0 && asset.audio) {
             console.log(`[ProjectService] Starting audio for scene in segment ${segmentIndex + 1}`);
-            const audioSource = audioContext.createMediaElementSource(asset.audio);
-            audioSource.connect(audioDestination);
-            audioSources.push(audioSource);
-            asset.audio.play().catch(err => console.error('Error playing audio:', err));
+            try {
+              const audioSource = audioContext.createMediaElementSource(asset.audio);
+              audioSource.connect(audioDestination);
+              audioSources.push(audioSource);
+              
+              // Ensure audio starts from the beginning
+              asset.audio.currentTime = 0;
+              
+              // Play audio with error handling
+              const playPromise = asset.audio.play();
+              if (playPromise !== undefined) {
+                playPromise.catch(err => {
+                  console.error('Error playing audio:', err);
+                  // Continue to next frame even if audio fails
+                  currentFrameInScene++;
+                  requestAnimationFrame(processNextFrame);
+                });
+              }
+            } catch (err) {
+              console.error('Error setting up audio:', err);
+              // Continue to next frame even if audio setup fails
+              currentFrameInScene++;
+              requestAnimationFrame(processNextFrame);
+              return;
+            }
           }
           
           // Render the current frame with actual audio time
@@ -1173,12 +1181,16 @@ export class ProjectService {
           
           // Check if we've completed the current scene
           if (currentFrameInScene >= frameCount) {
-            // Stop the audio for the current scene
+            // Stop the current audio
             if (asset.audio) {
-              asset.audio.pause();
+              try {
+                asset.audio.pause();
+              } catch (e) {
+                console.error('Error pausing audio:', e);
+              }
             }
             
-            // Move to the next scene
+            // Move to the next scene immediately
             currentSceneIndex++;
             currentFrameInScene = 0;
           }
