@@ -28,7 +28,8 @@ import {
   Trash2, 
   RefreshCw,
   Youtube,
-  Loader2
+  Loader2,
+  FileVideo
 } from 'lucide-react';
 
 interface VideoPlayerWithSubtitlesProps {
@@ -62,12 +63,11 @@ export function VideoProcessor() {
   const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
   const [posterImageUrl, setPosterImageUrl] = useState<string | null>(null);
   const [videoGenerationProgress, setVideoGenerationProgress] = useState<{
-    stage: 'preparing' | 'processing' | 'finalizing';
+    stage: string;
     progress: number;
-    currentScene?: number;
-    totalScenes?: number;
-    sceneProgress?: number;
   } | null>(null);
+  const [individualSceneUrls, setIndividualSceneUrls] = useState<string[]>([]);
+  const [isGeneratingIndividualVideos, setIsGeneratingIndividualVideos] = useState(false);
 
   // Initialize FileSystemService only on the client side
   useEffect(() => {
@@ -514,7 +514,10 @@ export function VideoProcessor() {
     }
 
     setIsGeneratingVideo(true);
-    setVideoGenerationProgress({ stage: 'preparing', progress: 0 });
+    setVideoGenerationProgress({
+      stage: 'Preparing to generate video',
+      progress: 0,
+    });
     console.log('[VideoProcessor] Starting video generation process...', {
       projectTitle: currentProject.title,
       videoFormat: currentProject.videoFormat,
@@ -523,35 +526,16 @@ export function VideoProcessor() {
 
     // Set up progress tracking with enhanced feedback
     const progressHandler = (progress: number) => {
-      let stage: 'preparing' | 'processing' | 'finalizing';
+      const stage = progress < 0.1 
+        ? 'Preparing assets' 
+        : progress < 0.9 
+          ? 'Generating video' 
+          : 'Finalizing video';
       
-      // Map progress to stages
-      if (progress < 0.1) {
-        stage = 'preparing';
-        setVideoGenerationProgress({ 
-          stage, 
-          progress: progress * 10 * 100
-        });
-      } else if (progress < 0.9) {
-        stage = 'processing';
-        
-        // Extract scene information from the progress message if available
-        const { currentScene, totalScenes, sceneProgress } = projectService.getProgressDetails() || {};
-        
-        setVideoGenerationProgress({ 
-          stage, 
-          progress: ((progress - 0.1) / 0.8) * 100,
-          currentScene,
-          totalScenes,
-          sceneProgress
-        });
-      } else {
-        stage = 'finalizing';
-        setVideoGenerationProgress({ 
-          stage, 
-          progress: (progress - 0.9) * 10 * 100
-        });
-      }
+      setVideoGenerationProgress({ 
+        stage, 
+        progress: progress * 100
+      });
     };
     
     // Use the project service's progress callback
@@ -611,7 +595,108 @@ export function VideoProcessor() {
       });
     } finally {
       setIsGeneratingVideo(false);
-      setVideoGenerationProgress(null);
+      projectService.setProgressCallback(null);
+    }
+  };
+
+  const handleGenerateIndividualSceneVideos = async () => {
+    if (!currentProject || !scenes || scenes.length === 0) {
+      setError({
+        stage: 'video-generation',
+        message: 'No scenes available to generate videos',
+        timestamp: new Date(),
+      });
+      return;
+    }
+
+    setIsGeneratingIndividualVideos(true);
+    setError(null);
+    setVideoGenerationProgress({
+      stage: 'Preparing to generate individual scene videos',
+      progress: 0,
+    });
+
+    // Revoke any existing URLs to prevent memory leaks
+    individualSceneUrls.forEach(url => {
+      URL.revokeObjectURL(url);
+    });
+    setIndividualSceneUrls([]);
+
+    // Set up progress handler
+    const progressHandler = (progress: number) => {
+      const stage = progress < 0.1 
+        ? 'Preparing assets' 
+        : progress < 0.9 
+          ? 'Generating individual scene videos' 
+          : 'Finalizing videos';
+      
+      setVideoGenerationProgress({ 
+        stage, 
+        progress: progress * 100
+      });
+    };
+    
+    // Use the project service's progress callback
+    projectService.setProgressCallback(progressHandler);
+
+    try {
+      // Generate individual scene videos with timeout protection
+      const timeoutPromise = new Promise<Blob[]>((_, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Video generation timed out. Try with fewer scenes or a desktop browser.'));
+        }, 420000); // 7 minute timeout
+        return () => clearTimeout(timeout);
+      });
+      
+      const videosPromise = projectService.generateIndividualSceneVideos(scenes, currentProject);
+      const sceneVideos = await Promise.race([videosPromise, timeoutPromise]);
+      
+      // Create video URLs for each scene
+      const videoUrls = sceneVideos.map(blob => URL.createObjectURL(blob));
+      setIndividualSceneUrls(videoUrls);
+      
+      // Create download links for each scene video
+      const projectTitle = currentProject.title || 'generated-video';
+      const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+      const timestamp = new Date().toISOString().split('T')[0];
+      
+      // Determine file extension based on MIME type
+      const getFileExtension = (mimeType: string) => {
+        if (mimeType.includes('mp4')) return 'mp4';
+        if (mimeType.includes('webm')) return 'webm';
+        return 'mp4'; // Default to mp4 as a fallback
+      };
+      
+      // Download each scene video
+      sceneVideos.forEach((blob, index) => {
+        const sceneNumber = index + 1;
+        const fileExtension = getFileExtension(blob.type);
+        const filename = `${safeTitle}-scene-${sceneNumber}-${timestamp}.${fileExtension}`;
+        
+        console.log(`[VideoProcessor] Initiating scene ${sceneNumber} video download`, { filename, type: blob.type });
+        const a = document.createElement('a');
+        a.href = videoUrls[index];
+        a.download = filename;
+        
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      });
+
+      setVideoGenerationProgress({
+        stage: 'Individual scene videos generated successfully',
+        progress: 100,
+      });
+    } catch (error: any) {
+      console.error('[VideoProcessor] Individual scene video generation error:', error);
+      setError({
+        stage: 'video-generation',
+        message: error.message || 'Failed to generate individual scene videos',
+        details: error,
+        timestamp: new Date(),
+      });
+    } finally {
+      setIsGeneratingIndividualVideos(false);
       projectService.setProgressCallback(null);
     }
   };
@@ -629,24 +714,20 @@ export function VideoProcessor() {
   const renderProgressBar = () => {
     if (!videoGenerationProgress) return null;
     
-    const { stage, progress, currentScene, totalScenes, sceneProgress } = videoGenerationProgress;
+    const { stage, progress } = videoGenerationProgress;
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
     let statusText = '';
     let statusProgress = 0;
     
     // Determine the appropriate status text and progress value
-    if (stage === 'preparing') {
+    if (stage === 'Preparing assets') {
       statusText = 'Preparing assets...';
       statusProgress = progress;
-    } else if (stage === 'processing') {
-      if (currentScene && totalScenes) {
-        statusText = `Processing scene ${currentScene}/${totalScenes}${sceneProgress ? ` (${Math.round(sceneProgress)}%)` : ''}`;
-      } else {
-        statusText = 'Processing scenes...';
-      }
+    } else if (stage === 'Generating video') {
+      statusText = 'Generating video...';
       statusProgress = progress;
-    } else if (stage === 'finalizing') {
+    } else if (stage === 'Finalizing video') {
       statusText = 'Finalizing video...';
       statusProgress = progress;
     }
@@ -658,12 +739,12 @@ export function VideoProcessor() {
           <span>{Math.round(statusProgress)}%</span>
         </div>
         <Progress value={statusProgress} className="h-2" />
-        {stage === 'preparing' && progress > 40 && progress < 60 && isMobile && (
+        {stage === 'Preparing assets' && progress > 40 && progress < 60 && isMobile && (
           <p className="text-xs text-amber-500 mt-1">
             <strong>Mobile device detected:</strong> This stage may take longer on mobile. Please be patient and keep the browser tab open.
           </p>
         )}
-        {stage === 'processing' && (
+        {stage === 'Generating video' && (
           <p className="text-xs text-muted-foreground mt-1">
             This may take several minutes depending on the number of scenes. Please don't close this tab.
             {isMobile && ' On mobile devices, this process can take significantly longer.'}
@@ -769,25 +850,48 @@ export function VideoProcessor() {
                   Generate All Subtitles
                 </Button>
               </div>
-              <Button
-                variant="default"
-                onClick={handleGenerateVideo}
-                disabled={isGeneratingVideo || isProcessing}
-                className="h-10"
-              >
-                {isGeneratingVideo ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <Video className="mr-2 h-4 w-4" />
-                    Generate Video
-                  </>
-                )}
-              </Button>
+              <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                <Button
+                  variant="default"
+                  onClick={handleGenerateVideo}
+                  disabled={isGeneratingVideo || isProcessing}
+                  className="h-10"
+                >
+                  {isGeneratingVideo ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Video className="mr-2 h-4 w-4" />
+                      Generate Video
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleGenerateIndividualSceneVideos}
+                  disabled={isGeneratingIndividualVideos || !scenes || scenes.length === 0 || !currentProject}
+                  className="h-10"
+                >
+                  {isGeneratingIndividualVideos ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <FileVideo className="mr-2 h-4 w-4" />
+                      Download Individual Scene Videos
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              <strong>Debug option:</strong> Download individual scene videos to identify where additional silence might be present.
+            </p>
           </CardHeader>
           <CardContent>
             {isGeneratingVideo && (

@@ -598,11 +598,35 @@ export class ProjectService {
           let currentAudioTime = 0;
           if (asset.audio && !asset.audio.paused) {
             currentAudioTime = asset.audio.currentTime;
+            
+            // Check if we're at the end of the audio
+            if (asset.audio.duration > 0 && 
+                (asset.audio.currentTime >= asset.audio.duration - 0.05 || asset.audio.ended)) {
+              // Move to the next scene immediately when audio ends
+              console.log(`[ProjectService] Audio ended for scene in segment ${currentSceneIndex + 1}, moving to next scene`);
+              
+              // Stop the current audio
+              if (asset.audio) {
+                try {
+                  asset.audio.pause();
+                } catch (e) {
+                  console.error('Error pausing audio:', e);
+                }
+              }
+              
+              // Move to the next scene
+              currentSceneIndex++;
+              currentFrameInScene = 0;
+              
+              // Continue the animation loop
+              requestAnimationFrame(processNextFrame);
+              return;
+            }
           }
           
           // Connect audio if this is the first frame of the scene
           if (currentFrameInScene === 0 && asset.audio) {
-            console.log(`[ProjectService] Starting audio for scene ${currentSceneIndex + 1}`);
+            console.log(`[ProjectService] Starting audio for scene in segment ${currentSceneIndex + 1}`);
             try {
               const audioSource = audioContext.createMediaElementSource(asset.audio);
               audioSource.connect(audioDestination);
@@ -1124,33 +1148,27 @@ export class ProjectService {
           let currentAudioTime = 0;
           if (asset.audio && !asset.audio.paused) {
             currentAudioTime = asset.audio.currentTime;
-          }
-          
-          // Connect audio if this is the first frame of the scene
-          if (currentFrameInScene === 0 && asset.audio) {
-            console.log(`[ProjectService] Starting audio for scene in segment ${segmentIndex + 1}`);
-            try {
-              const audioSource = audioContext.createMediaElementSource(asset.audio);
-              audioSource.connect(audioDestination);
-              audioSources.push(audioSource);
+            
+            // Check if we're at the end of the audio
+            if (asset.audio.duration > 0 && 
+                (asset.audio.currentTime >= asset.audio.duration - 0.05 || asset.audio.ended)) {
+              // Move to the next scene immediately when audio ends
+              console.log(`[ProjectService] Audio ended for scene in segment ${segmentIndex + 1}, moving to next scene`);
               
-              // Ensure audio starts from the beginning
-              asset.audio.currentTime = 0;
-              
-              // Play audio with error handling
-              const playPromise = asset.audio.play();
-              if (playPromise !== undefined) {
-                playPromise.catch(err => {
-                  console.error('Error playing audio:', err);
-                  // Continue to next frame even if audio fails
-                  currentFrameInScene++;
-                  requestAnimationFrame(processNextFrame);
-                });
+              // Stop the current audio
+              if (asset.audio) {
+                try {
+                  asset.audio.pause();
+                } catch (e) {
+                  console.error('Error pausing audio:', e);
+                }
               }
-            } catch (err) {
-              console.error('Error setting up audio:', err);
-              // Continue to next frame even if audio setup fails
-              currentFrameInScene++;
+              
+              // Move to the next scene
+              currentSceneIndex++;
+              currentFrameInScene = 0;
+              
+              // Continue the animation loop
               requestAnimationFrame(processNextFrame);
               return;
             }
@@ -1278,6 +1296,473 @@ export class ProjectService {
       // Fallback: If FFmpeg fails, just return the first segment
       console.warn('[ProjectService] Falling back to returning first segment only');
       return segmentBlobs[0];
+    }
+  }
+
+  /**
+   * Generate individual scene videos without merging them
+   * @param scenes The scenes to generate videos for
+   * @param project The current project
+   * @returns An array of blobs, one for each scene
+   */
+  async generateIndividualSceneVideos(scenes: Scene[], project: Project): Promise<Blob[]> {
+    try {
+      console.log('[ProjectService] Starting individual scene video generation');
+      
+      // Reset progress
+      this.updateProgress(0);
+      
+      // Validate scenes
+      if (!scenes || scenes.length === 0) {
+        throw new ProcessingError({
+          stage: 'video-processing',
+          message: 'No scenes provided for video generation',
+          timestamp: new Date(),
+        });
+      }
+      
+      // Filter out scenes without audio or image
+      const validScenes = scenes.filter(scene => scene.audioPath && scene.imagePath);
+      
+      if (validScenes.length === 0) {
+        throw new ProcessingError({
+          stage: 'video-processing',
+          message: 'No valid scenes with both audio and image found',
+          timestamp: new Date(),
+        });
+      }
+      
+      console.log(`[ProjectService] Generating individual videos for ${validScenes.length} scenes`);
+      
+      // Load assets for each scene
+      const sceneAssets = await Promise.all(
+        validScenes.map(async (scene) => {
+          try {
+            // Load image
+            const image = scene.imagePath ? await this.loadImage(scene.imagePath) : null;
+            
+            // Load audio
+            const audio = scene.audioPath ? await this.loadAudio(scene.audioPath) : null;
+            
+            // Get audio duration
+            const audioDuration = audio ? audio.duration : 0;
+            
+            return {
+              scene,
+              image,
+              audio,
+              audioDuration,
+              success: !!image && !!audio && audioDuration > 0,
+            };
+          } catch (error) {
+            console.error(`[ProjectService] Error loading assets for scene ${scene.id}:`, error);
+            return {
+              scene,
+              image: null,
+              audio: null,
+              audioDuration: 0,
+              success: false,
+            };
+          }
+        })
+      );
+      
+      // Filter out scenes with failed asset loading
+      const validSceneAssets = sceneAssets.filter(asset => asset.success);
+      
+      if (validSceneAssets.length === 0) {
+        throw new ProcessingError({
+          stage: 'video-processing',
+          message: 'Failed to load assets for any scenes',
+          timestamp: new Date(),
+        });
+      }
+      
+      console.log(`[ProjectService] Successfully loaded assets for ${validSceneAssets.length} scenes`);
+      
+      // Update progress
+      this.updateProgress(0.1);
+      
+      // Use the segmented video approach but treat each scene as its own segment
+      const FPS = 30;
+      
+      // Create individual segments (one per scene)
+      const segments = validSceneAssets.map(asset => [asset]);
+      
+      console.log(`[ProjectService] Processing ${segments.length} individual scene videos`);
+      
+      // Process each segment (scene)
+      const sceneBlobs: Blob[] = [];
+      
+      for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
+        const segment = segments[segmentIndex];
+        console.log(`[ProjectService] Processing scene video ${segmentIndex + 1}/${segments.length}`);
+        
+        // Create a canvas and context for this scene
+        const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        const videoWidth = isMobile ? 1280 : 1920;
+        const videoHeight = project.videoFormat === 'landscape' ? videoWidth * 9/16 : videoWidth * 16/9;
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = videoWidth;
+        canvas.height = videoHeight;
+        const ctx = canvas.getContext('2d')!;
+        
+        // Calculate video bitrate based on resolution (lower for mobile)
+        const videoBitrate = isMobile ? 1500000 : 2500000; // 1.5Mbps for mobile, 2.5Mbps for desktop
+        
+        // Get supported MIME type
+        const getSupportedMimeType = () => {
+          // Prioritize MP4 over WebM for better compatibility
+          const types = [
+            'video/mp4',
+            'video/webm;codecs=h264,opus',
+            'video/webm;codecs=vp9,opus',
+            'video/webm;codecs=vp8,opus',
+            'video/webm'
+          ];
+          
+          for (const type of types) {
+            if (MediaRecorder.isTypeSupported(type)) {
+              console.log(`[ProjectService] Using supported MIME type: ${type}`);
+              return type;
+            }
+          }
+          
+          console.warn('[ProjectService] No preferred MIME types supported, using default');
+          return '';
+        };
+        
+        const selectedMimeType = getSupportedMimeType() || 'video/mp4';
+        
+        // Create a MediaRecorder for this scene
+        const stream = canvas.captureStream(FPS);
+        const audioContext = new AudioContext();
+        const audioDestination = audioContext.createMediaStreamDestination();
+        
+        const combinedStream = new MediaStream([
+          ...stream.getVideoTracks(),
+          ...audioDestination.stream.getAudioTracks()
+        ]);
+        
+        const mediaRecorder = new MediaRecorder(combinedStream, {
+          mimeType: selectedMimeType,
+          videoBitsPerSecond: videoBitrate
+        });
+        
+        const chunks: Blob[] = [];
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            chunks.push(e.data);
+          }
+        };
+        
+        // For better reliability, use smaller data chunks
+        const dataAvailableInterval = 500; // ms
+        
+        // Create a promise that resolves when recording is complete
+        const recordingPromise = new Promise<Blob>((resolve) => {
+          mediaRecorder.onstop = () => {
+            const videoBlob = new Blob(chunks, { type: selectedMimeType });
+            console.log(`[ProjectService] Scene video ${segmentIndex + 1} complete, created ${videoBlob.size} byte video`);
+            resolve(videoBlob);
+          };
+        });
+        
+        // Start recording
+        mediaRecorder.start(dataAvailableInterval);
+        console.log(`[ProjectService] Started media recorder for scene ${segmentIndex + 1}`);
+        
+        // Create a function to render a specific frame
+        const renderFrame = (asset: typeof validSceneAssets[0], frameNumber: number, actualAudioTime: number) => {
+          if (!asset.image) return;
+          
+          // Clear the canvas
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          
+          // Draw the image
+          const imageAspectRatio = asset.image.width / asset.image.height;
+          let drawWidth, drawHeight, offsetX, offsetY;
+          
+          if (imageAspectRatio > canvas.width / canvas.height) {
+            // Image is wider than canvas (relative to their heights)
+            drawHeight = canvas.height;
+            drawWidth = drawHeight * imageAspectRatio;
+            offsetX = (canvas.width - drawWidth) / 2;
+            offsetY = 0;
+          } else {
+            // Image is taller than canvas (relative to their widths)
+            drawWidth = canvas.width;
+            drawHeight = drawWidth / imageAspectRatio;
+            offsetX = 0;
+            offsetY = (canvas.height - drawHeight) / 2;
+          }
+          
+          ctx.drawImage(asset.image, offsetX, offsetY, drawWidth, drawHeight);
+          
+          // Use the actual audio time instead of calculating from frame number
+          const currentTime = actualAudioTime;
+          
+          // Get subtitle settings from the store
+          const subtitleSettings = useSettingsStore.getState().subtitleSettings;
+          const fontSize = subtitleSettings.fontSize || 32; // Use the font size from settings
+          const wordsToDisplay = subtitleSettings.displayWordCount || 5;
+          const highlightColor = subtitleSettings.highlightColor || '#FF0000';
+          
+          // Find the subtitle segments for this scene
+          const subtitles = asset.scene.subtitles;
+          if (!subtitles || !subtitles.segments || subtitles.segments.length === 0) {
+            return;
+          }
+          
+          // Extract all words with their timing data
+          const allWords: {word: string, start: number, end: number}[] = [];
+          
+          // Flatten all words from all segments
+          subtitles.segments.forEach(segment => {
+            const segmentWithWords = segment as {
+              words?: Array<{ word: string; start: number; end: number }>;
+            };
+            
+            if (segmentWithWords.words) {
+              segmentWithWords.words.forEach(word => {
+                allWords.push({
+                  word: word.word,
+                  start: word.start,
+                  end: word.end
+                });
+              });
+            }
+          });
+          
+          if (allWords.length === 0) {
+            return; // No words with timing data
+          }
+          
+          // Find the current word based on the current time
+          let currentWordIndex = -1;
+          
+          // First try to find an exact match (word being spoken right now)
+          for (let i = 0; i < allWords.length; i++) {
+            if (currentTime >= allWords[i].start && currentTime <= allWords[i].end) {
+              currentWordIndex = i;
+              break;
+            }
+          }
+          
+          // If no exact match, find the most recent word
+          if (currentWordIndex === -1) {
+            let smallestTimeDiff = Number.MAX_VALUE;
+            
+            for (let i = 0; i < allWords.length; i++) {
+              if (allWords[i].start <= currentTime) {
+                const timeDiff = currentTime - allWords[i].start;
+                if (timeDiff < smallestTimeDiff) {
+                  smallestTimeDiff = timeDiff;
+                  currentWordIndex = i;
+                }
+              }
+            }
+          }
+          
+          // If we found a word, display it and surrounding words based on wordsToDisplay setting
+          if (currentWordIndex >= 0) {
+            // Determine the range of words to display
+            const halfCount = Math.floor(wordsToDisplay / 2);
+            const startWordIndex = Math.max(0, currentWordIndex - halfCount);
+            const endWordIndex = Math.min(allWords.length - 1, startWordIndex + wordsToDisplay - 1);
+            
+            // Set up text rendering with the font size from settings
+            const scaledFontSize = isMobile ? Math.floor(fontSize * 0.75) : fontSize;
+            ctx.font = `${scaledFontSize}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            
+            // Calculate text position (centered at bottom of canvas with padding)
+            const textX = canvas.width / 2;
+            const textY = canvas.height - 20; // 20px padding from bottom
+            
+            // Draw semi-transparent background for better readability
+            // First measure the total text width to create the background
+            let totalTextWidth = 0;
+            for (let i = startWordIndex; i <= endWordIndex; i++) {
+              totalTextWidth += ctx.measureText(allWords[i].word + ' ').width;
+            }
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(
+              textX - totalTextWidth / 2 - 10,
+              textY - scaledFontSize - 10,
+              totalTextWidth + 20,
+              scaledFontSize + 20
+            );
+            
+            // Draw each word individually to apply highlighting to the current word
+            let currentX = textX - totalTextWidth / 2;
+            
+            for (let i = startWordIndex; i <= endWordIndex; i++) {
+              const word = allWords[i].word;
+              const wordWidth = ctx.measureText(word + ' ').width;
+              
+              // Set color based on whether this is the current word
+              if (i === currentWordIndex) {
+                ctx.fillStyle = highlightColor; // Use highlight color for the current word
+              } else {
+                ctx.fillStyle = 'white'; // Use white for other words
+              }
+              
+              // Draw the word
+              ctx.textAlign = 'left';
+              ctx.fillText(word + ' ', currentX, textY);
+              
+              // Move to the next word position
+              currentX += wordWidth;
+            }
+          }
+        };
+        
+        // Create a more efficient processing loop using requestAnimationFrame
+        const processScene = async () => {
+          const asset = segment[0]; // There's only one asset per segment in this case
+          const frameCount = Math.ceil(asset.audioDuration * FPS);
+          let currentFrameInScene = 0;
+          let lastFrameTime = 0;
+          let audioSource: AudioNode | null = null;
+          let audioEnded = false;
+          
+          // Function to process the next frame
+          const processNextFrame = async (timestamp: number) => {
+            // Skip if we're processing too quickly
+            if (timestamp - lastFrameTime < 1000 / FPS) {
+              requestAnimationFrame(processNextFrame);
+              return;
+            }
+            
+            lastFrameTime = timestamp;
+            
+            // Check if audio has ended or we've reached the calculated frame count
+            if (audioEnded || (asset.audio && asset.audio.ended) || currentFrameInScene >= frameCount) {
+              console.log(`[ProjectService] Audio ended or all frames rendered for scene ${segmentIndex + 1}, stopping recorder`);
+              
+              // Disconnect audio source before stopping
+              if (audioSource) {
+                try {
+                  audioSource.disconnect();
+                } catch (e) {
+                  // Ignore errors when disconnecting
+                }
+              }
+              
+              mediaRecorder.stop();
+              return;
+            }
+            
+            // Get the actual audio time for the current scene
+            let currentAudioTime = 0;
+            if (asset.audio && !asset.audio.paused) {
+              currentAudioTime = asset.audio.currentTime;
+              
+              // Check if we're at the end of the audio
+              if (asset.audio.duration > 0 && 
+                  (asset.audio.currentTime >= asset.audio.duration - 0.05 || asset.audio.ended)) {
+                audioEnded = true;
+              }
+            }
+            
+            // Connect audio if this is the first frame of the scene
+            if (currentFrameInScene === 0 && asset.audio) {
+              console.log(`[ProjectService] Starting audio for scene in segment ${segmentIndex + 1}`);
+              try {
+                audioSource = audioContext.createMediaElementSource(asset.audio);
+                audioSource.connect(audioDestination);
+                
+                // Ensure audio starts from the beginning
+                asset.audio.currentTime = 0;
+                
+                // Play audio with error handling
+                const playPromise = asset.audio.play();
+                if (playPromise !== undefined) {
+                  playPromise.catch(err => {
+                    console.error('Error playing audio:', err);
+                    // Continue to next frame even if audio fails
+                    currentFrameInScene++;
+                    requestAnimationFrame(processNextFrame);
+                  });
+                }
+              } catch (err) {
+                console.error('Error setting up audio:', err);
+                // Continue to next frame even if audio setup fails
+                currentFrameInScene++;
+                requestAnimationFrame(processNextFrame);
+                return;
+              }
+            }
+            
+            // Render the current frame with actual audio time
+            renderFrame(asset, currentFrameInScene, currentAudioTime);
+            
+            // Calculate overall progress
+            const overallProgress = (segmentIndex + (currentFrameInScene / frameCount)) / segments.length;
+            const progress = 0.1 + overallProgress * 0.8; // Allocate 80% of progress to frame rendering
+            
+            // Update progress details for UI feedback
+            this.progressDetails = {
+              currentScene: segmentIndex + 1,
+              totalScenes: segments.length,
+              sceneProgress: frameCount ? (currentFrameInScene / frameCount * 100) : 0
+            };
+            
+            this.updateProgress(progress);
+            
+            // Move to next frame
+            currentFrameInScene++;
+            
+            // Continue the animation loop
+            requestAnimationFrame(processNextFrame);
+          };
+          
+          // Start the processing loop
+          requestAnimationFrame(processNextFrame);
+        };
+        
+        // Start processing the scene
+        processScene();
+        
+        // Wait for scene recording to complete
+        const sceneBlob = await recordingPromise;
+        
+        // Log the audio duration and estimated video duration for debugging
+        const currentAsset = segment[0];
+        const estimatedFrameCount = Math.ceil(currentAsset.audioDuration * FPS);
+        console.log(`[ProjectService] Scene ${segmentIndex + 1} - Audio duration: ${currentAsset.audioDuration.toFixed(2)}s, Estimated video duration: ${(estimatedFrameCount / FPS).toFixed(2)}s`);
+        
+        sceneBlobs.push(sceneBlob);
+        
+        // Clean up resources
+        try {
+          audioContext.close();
+        } catch (e) {
+          console.error('Error closing audio context:', e);
+        }
+        
+        // Update progress
+        const sceneProgress = (segmentIndex + 1) / segments.length;
+        this.updateProgress(0.1 + sceneProgress * 0.8);
+      }
+      
+      console.log(`[ProjectService] All ${sceneBlobs.length} individual scene videos processed`);
+      
+      // Update progress to 100%
+      this.updateProgress(1.0);
+      
+      return sceneBlobs;
+    } catch (error: any) {
+      console.error('[ProjectService] Error generating individual scene videos:', error);
+      throw new ProcessingError({
+        stage: 'video-processing',
+        message: error.message || 'Failed to generate individual scene videos',
+        timestamp: new Date(),
+      });
     }
   }
 } 
