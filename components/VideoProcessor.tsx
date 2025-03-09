@@ -66,8 +66,6 @@ export function VideoProcessor() {
     stage: string;
     progress: number;
   } | null>(null);
-  const [individualSceneUrls, setIndividualSceneUrls] = useState<string[]>([]);
-  const [isGeneratingIndividualVideos, setIsGeneratingIndividualVideos] = useState(false);
 
   // Initialize FileSystemService only on the client side
   useEffect(() => {
@@ -599,108 +597,6 @@ export function VideoProcessor() {
     }
   };
 
-  const handleGenerateIndividualSceneVideos = async () => {
-    if (!currentProject || !scenes || scenes.length === 0) {
-      setError({
-        stage: 'video-generation',
-        message: 'No scenes available to generate videos',
-        timestamp: new Date(),
-      });
-      return;
-    }
-
-    setIsGeneratingIndividualVideos(true);
-    setError(null);
-    setVideoGenerationProgress({
-      stage: 'Preparing to generate individual scene videos',
-      progress: 0,
-    });
-
-    // Revoke any existing URLs to prevent memory leaks
-    individualSceneUrls.forEach(url => {
-      URL.revokeObjectURL(url);
-    });
-    setIndividualSceneUrls([]);
-
-    // Set up progress handler
-    const progressHandler = (progress: number) => {
-      const stage = progress < 0.1 
-        ? 'Preparing assets' 
-        : progress < 0.9 
-          ? 'Generating individual scene videos' 
-          : 'Finalizing videos';
-      
-      setVideoGenerationProgress({ 
-        stage, 
-        progress: progress * 100
-      });
-    };
-    
-    // Use the project service's progress callback
-    projectService.setProgressCallback(progressHandler);
-
-    try {
-      // Generate individual scene videos with timeout protection
-      const timeoutPromise = new Promise<Blob[]>((_, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Video generation timed out. Try with fewer scenes or a desktop browser.'));
-        }, 420000); // 7 minute timeout
-        return () => clearTimeout(timeout);
-      });
-      
-      const videosPromise = projectService.generateIndividualSceneVideos(scenes, currentProject);
-      const sceneVideos = await Promise.race([videosPromise, timeoutPromise]);
-      
-      // Create video URLs for each scene
-      const videoUrls = sceneVideos.map(blob => URL.createObjectURL(blob));
-      setIndividualSceneUrls(videoUrls);
-      
-      // Create download links for each scene video
-      const projectTitle = currentProject.title || 'generated-video';
-      const safeTitle = projectTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-      const timestamp = new Date().toISOString().split('T')[0];
-      
-      // Determine file extension based on MIME type
-      const getFileExtension = (mimeType: string) => {
-        if (mimeType.includes('mp4')) return 'mp4';
-        if (mimeType.includes('webm')) return 'webm';
-        return 'mp4'; // Default to mp4 as a fallback
-      };
-      
-      // Download each scene video
-      sceneVideos.forEach((blob, index) => {
-        const sceneNumber = index + 1;
-        const fileExtension = getFileExtension(blob.type);
-        const filename = `${safeTitle}-scene-${sceneNumber}-${timestamp}.${fileExtension}`;
-        
-        console.log(`[VideoProcessor] Initiating scene ${sceneNumber} video download`, { filename, type: blob.type });
-        const a = document.createElement('a');
-        a.href = videoUrls[index];
-        a.download = filename;
-        
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      });
-
-      setVideoGenerationProgress({
-        stage: 'Individual scene videos generated successfully',
-        progress: 100,
-      });
-    } catch (error: any) {
-      console.error('[VideoProcessor] Individual scene video generation error:', error);
-      setError({
-        stage: 'video-generation',
-        message: error.message || 'Failed to generate individual scene videos',
-        details: error,
-        timestamp: new Date(),
-      });
-    } finally {
-      setIsGeneratingIndividualVideos(false);
-      projectService.setProgressCallback(null);
-    }
-  };
-
   const handleDeleteScene = (sceneId: string) => {
     const updatedScenes = scenes.filter(scene => scene.id !== sceneId)
       .map((scene, index) => ({
@@ -869,29 +765,8 @@ export function VideoProcessor() {
                     </>
                   )}
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleGenerateIndividualSceneVideos}
-                  disabled={isGeneratingIndividualVideos || !scenes || scenes.length === 0 || !currentProject}
-                  className="h-10"
-                >
-                  {isGeneratingIndividualVideos ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <FileVideo className="mr-2 h-4 w-4" />
-                      Download Individual Scene Videos
-                    </>
-                  )}
-                </Button>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              <strong>Debug option:</strong> Download individual scene videos to identify where additional silence might be present.
-            </p>
           </CardHeader>
           <CardContent>
             {isGeneratingVideo && (

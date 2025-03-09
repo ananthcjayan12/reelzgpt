@@ -92,20 +92,23 @@ export class VideoProcessor {
       await this.ffmpeg.run(
         // Input image
         '-loop', '1',
-        '-framerate', '10',
+        '-framerate', '30',  // Increased framerate for smoother video
         '-i', 'image.png',
         // Input audio
         '-i', 'audio.mp3',
         // Video settings
         '-c:v', 'libx264',
-        '-preset', 'ultrafast',
+        '-preset', 'medium',  // Better quality preset (balance between speed and quality)
         '-tune', 'stillimage',
         '-c:a', 'aac',
-        '-b:a', '192k',
+        '-b:a', '320k',  // Higher audio bitrate for better quality
+        '-ar', '48000',  // Higher audio sample rate
         '-pix_fmt', 'yuv420p',
         '-shortest',
         '-s', `${width}x${height}`,  // Set video dimensions
         '-t', duration.toString(),
+        // Add movflags for better compatibility with media players
+        '-movflags', '+faststart',
         outputName
       );
 
@@ -148,6 +151,8 @@ export class VideoProcessor {
         '-safe', '0',
         '-i', 'concat.txt',
         '-c', 'copy',
+        // Add movflags for better compatibility with media players
+        '-movflags', '+faststart',
         outputName
       );
 

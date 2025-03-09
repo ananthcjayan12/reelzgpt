@@ -324,7 +324,8 @@ export class ProjectService {
       }
       
       // OPTIMIZATION: Reduce video quality on mobile for better performance
-      const videoBitrate = isMobile ? 1500000 : 5000000;
+      // Remove this declaration and use inline values
+      // const videoBitrate = isMobile ? 2500000 : 5000000; // 2.5Mbps for mobile, 5Mbps for desktop
       
       // Get supported MIME type
       const getSupportedMimeType = () => {
@@ -376,9 +377,14 @@ export class ProjectService {
         ...audioDestination.stream.getAudioTracks()
       ]);
       
+      // Calculate video bitrate based on resolution (higher for better quality)
+      // Remove this declaration and use inline values
+      // const videoBitrate = isMobile ? 2500000 : 5000000; // 2.5Mbps for mobile, 5Mbps for desktop
+      
       const mediaRecorder = new MediaRecorder(combinedStream, {
         mimeType: selectedMimeType,
-        videoBitsPerSecond: videoBitrate
+        videoBitsPerSecond: isMobile ? 2500000 : 5000000, // Higher quality: 2.5Mbps for mobile, 5Mbps for desktop
+        audioBitsPerSecond: 320000 // 320kbps audio for better quality
       });
       
       const chunks: Blob[] = [];
@@ -838,7 +844,8 @@ export class ProjectService {
     const ctx = canvas.getContext('2d')!;
     
     // Calculate video bitrate based on resolution (lower for mobile)
-    const videoBitrate = isMobile ? 1500000 : 2500000; // 1.5Mbps for mobile, 2.5Mbps for desktop
+    // Remove this declaration and use inline values
+    // const videoBitrate = isMobile ? 2500000 : 5000000; // 2.5Mbps for mobile, 5Mbps for desktop
     
     // Get supported MIME type
     const getSupportedMimeType = () => {
@@ -931,9 +938,14 @@ export class ProjectService {
         ...audioDestination.stream.getAudioTracks()
       ]);
       
+      // Calculate video bitrate based on resolution (higher for better quality)
+      // Remove this declaration and use inline values
+      // const videoBitrate = isMobile ? 2500000 : 5000000; // 2.5Mbps for mobile, 5Mbps for desktop
+      
       const mediaRecorder = new MediaRecorder(combinedStream, {
         mimeType: selectedMimeType,
-        videoBitsPerSecond: videoBitrate
+        videoBitsPerSecond: isMobile ? 2500000 : 5000000, // Higher quality: 2.5Mbps for mobile, 5Mbps for desktop
+        audioBitsPerSecond: 320000 // 320kbps audio for better quality
       });
       
       const chunks: Blob[] = [];
@@ -1275,7 +1287,9 @@ export class ProjectService {
         '-f', 'concat', 
         '-safe', '0', 
         '-i', 'concat.txt', 
-        '-c', 'copy', 
+        '-c', 'copy',
+        // Add movflags for better compatibility with media players like VLC
+        '-movflags', '+faststart',
         `output.${outputExt}`
       );
       
@@ -1408,8 +1422,9 @@ export class ProjectService {
         canvas.height = videoHeight;
         const ctx = canvas.getContext('2d')!;
         
-        // Calculate video bitrate based on resolution (lower for mobile)
-        const videoBitrate = isMobile ? 1500000 : 2500000; // 1.5Mbps for mobile, 2.5Mbps for desktop
+        // Calculate video bitrate based on resolution (higher for better quality)
+        // Remove this declaration and use inline values
+        // const videoBitrate = isMobile ? 2500000 : 5000000; // 2.5Mbps for mobile, 5Mbps for desktop
         
         // Get supported MIME type
         const getSupportedMimeType = () => {
@@ -1447,7 +1462,8 @@ export class ProjectService {
         
         const mediaRecorder = new MediaRecorder(combinedStream, {
           mimeType: selectedMimeType,
-          videoBitsPerSecond: videoBitrate
+          videoBitsPerSecond: isMobile ? 2500000 : 5000000, // Higher quality: 2.5Mbps for mobile, 5Mbps for desktop
+          audioBitsPerSecond: 320000 // 320kbps audio for better quality
         });
         
         const chunks: Blob[] = [];
