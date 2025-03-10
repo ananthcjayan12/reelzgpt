@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSettingsStore, OPENAI_MODELS } from '@/lib/store/settings';
-import { usePromptStore, DEFAULT_PROMPTS } from '@/lib/store/prompts';
+import { usePromptStore, DEFAULT_PROMPTS, VideoType } from '@/lib/store/prompts';
 import { validateApiKey as validateOpenAIKey } from '@/lib/services/openai';
 import { validateApiKey as validateReplicateKey } from '@/lib/services/replicate';
 import { PromptTemplates } from './PromptTemplates';
@@ -17,9 +17,19 @@ import {
   MessageSquare,
   Settings as SettingsIcon,
   Subtitles,
-  RotateCcw
+  RotateCcw,
+  FileText
 } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
+import { 
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface SubtitleSettings {
   highlightColor: string;
@@ -44,6 +54,8 @@ export function Settings() {
   const {
     narrationDescription,
     imagePromptDescription,
+    videoType,
+    setVideoType,
     setNarrationDescription,
     setImagePromptDescription,
     resetToDefaults
@@ -53,7 +65,7 @@ export function Settings() {
   const [isTestingReplicate, setIsTestingReplicate] = useState(false);
   const [openAIStatus, setOpenAIStatus] = useState<'success' | 'error' | null>(null);
   const [replicateStatus, setReplicateStatus] = useState<'success' | 'error' | null>(null);
-  const [activeTab, setActiveTab] = useState<'api' | 'prompts' | 'subtitles'>('api');
+  const [activeTab, setActiveTab] = useState<'api' | 'prompts' | 'templates' | 'subtitles'>('api');
 
   const testOpenAIKey = async () => {
     setIsTestingOpenAI(true);
@@ -77,6 +89,15 @@ export function Settings() {
     setIsTestingReplicate(false);
   };
 
+  const handleTemplateSelection = (type: VideoType) => {
+    const template = DEFAULT_PROMPTS.videoTypeTemplates[type];
+    
+    setVideoType(type);
+    
+    setNarrationDescription(template.narrationDescription);
+    setImagePromptDescription(template.imagePromptDescription);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -97,6 +118,10 @@ export function Settings() {
           <TabsTrigger value="prompts" className="flex items-center space-x-2">
             <MessageSquare className="h-4 w-4" />
             <span>Prompts</span>
+          </TabsTrigger>
+          <TabsTrigger value="templates" className="flex items-center space-x-2">
+            <FileText className="h-4 w-4" />
+            <span>Templates</span>
           </TabsTrigger>
           <TabsTrigger value="subtitles" className="flex items-center space-x-2">
             <Subtitles className="h-4 w-4" />
@@ -197,21 +222,26 @@ export function Settings() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
                 <span>Prompt Templates</span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    if (confirm('Are you sure you want to reset all templates to their default values?')) {
-                      resetToDefaults();
-                    }
-                  }}
-                >
-                  <RotateCcw className="h-4 w-4 mr-2" />
-                  Reset to Defaults
-                </Button>
+                <div className="flex items-center space-x-2">
+                  <p className="text-sm text-muted-foreground">
+                    ℹ️ These descriptions update automatically when you select a template
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (confirm('Are you sure you want to reset all templates to their default values?')) {
+                        resetToDefaults();
+                      }
+                    }}
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Reset to Defaults
+                  </Button>
+                </div>
               </CardTitle>
               <CardDescription>
-                Customize the prompts used for generating content
+                Customize the prompts used for generating content. The descriptions below are optimized for your selected template: {videoType.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -264,6 +294,115 @@ export function Settings() {
                     <code className="bg-muted px-1 rounded">{`{{context}}`}</code>
                     <span className="text-muted-foreground">Previous and next segments for context</span>
                   </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="templates">
+          <Card>
+            <CardHeader>
+              <CardTitle>Video Type Templates</CardTitle>
+              <CardDescription>
+                Select a template for your video style. Each template has its own set of optimized prompts.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Object.entries(DEFAULT_PROMPTS.videoTypeTemplates).map(([type, template]) => (
+                  <div key={type} className="relative">
+                    <Button
+                      variant={videoType === type ? 'default' : 'outline'}
+                      onClick={() => handleTemplateSelection(type as VideoType)}
+                      className="h-auto py-4 px-4 w-full flex flex-col items-start justify-start text-left"
+                    >
+                      <div className="font-semibold mb-1">
+                        {type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {getTemplateDescription(type as VideoType)}
+                      </div>
+                    </Button>
+                    <div className="absolute top-2 right-2">
+                      <TemplatePreviewDialog template={template} type={type as VideoType} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-8 space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">Customize Template</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Modify the prompts for the selected template. Changes will be saved automatically.
+                  </p>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium">System Prompt</label>
+                      <Textarea
+                        value={usePromptStore.getState().videoTypeTemplates[videoType].systemPrompt}
+                        onChange={(e) => {
+                          usePromptStore.getState().updateVideoTypeTemplate(videoType, {
+                            systemPrompt: e.target.value
+                          });
+                        }}
+                        className="mt-2 font-mono text-sm"
+                        rows={6}
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="text-sm font-medium">YouTube User Prompt</label>
+                      <Textarea
+                        value={usePromptStore.getState().videoTypeTemplates[videoType].userPromptYoutube}
+                        onChange={(e) => {
+                          usePromptStore.getState().updateVideoTypeTemplate(videoType, {
+                            userPromptYoutube: e.target.value
+                          });
+                        }}
+                        className="mt-2 font-mono text-sm"
+                        rows={4}
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="text-sm font-medium">Topic User Prompt</label>
+                      <Textarea
+                        value={usePromptStore.getState().videoTypeTemplates[videoType].userPromptTopic}
+                        onChange={(e) => {
+                          usePromptStore.getState().updateVideoTypeTemplate(videoType, {
+                            userPromptTopic: e.target.value
+                          });
+                        }}
+                        className="mt-2 font-mono text-sm"
+                        rows={4}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end space-x-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (confirm('Are you sure you want to reset this template to its default values?')) {
+                        const defaultTemplate = DEFAULT_PROMPTS.videoTypeTemplates[videoType];
+                        usePromptStore.getState().updateVideoTypeTemplate(videoType, defaultTemplate);
+                      }
+                    }}
+                  >
+                    Reset Template
+                  </Button>
+                  <Button
+                    variant="default"
+                    onClick={() => {
+                      alert('Template customizations saved successfully!');
+                    }}
+                  >
+                    Save Changes
+                  </Button>
                 </div>
               </div>
             </CardContent>
@@ -408,4 +547,53 @@ export function Settings() {
       </Tabs>
     </div>
   );
+}
+
+function TemplatePreviewDialog({ template, type }: { template: any; type: VideoType }) {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <FileText className="h-4 w-4 mr-2" />
+          View Prompts
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')} Template</DialogTitle>
+          <DialogDescription>Preview the prompts used in this template</DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="h-[400px] mt-4">
+          <div className="space-y-6 pr-6">
+            <div>
+              <h4 className="text-sm font-medium mb-2">System Prompt</h4>
+              <pre className="bg-muted p-4 rounded-lg text-xs whitespace-pre-wrap">{template.systemPrompt}</pre>
+            </div>
+            <div>
+              <h4 className="text-sm font-medium mb-2">YouTube User Prompt</h4>
+              <pre className="bg-muted p-4 rounded-lg text-xs whitespace-pre-wrap">{template.userPromptYoutube}</pre>
+            </div>
+            <div>
+              <h4 className="text-sm font-medium mb-2">Topic User Prompt</h4>
+              <pre className="bg-muted p-4 rounded-lg text-xs whitespace-pre-wrap">{template.userPromptTopic}</pre>
+            </div>
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function getTemplateDescription(type: VideoType): string {
+  const descriptions: Record<VideoType, string> = {
+    cinematic: 'Visually stunning, emotionally engaging content with dramatic scenes',
+    advertisement: 'Persuasive, attention-grabbing content with clear call-to-action',
+    educational: 'Clear, informative content that explains concepts effectively',
+    marketing: 'Strategic content that highlights value propositions and builds brand narrative',
+    kids_story: 'Fun, age-appropriate content with colorful scenes and simple language',
+    story: 'Engaging narrative with character development and plot progression',
+    podcast: 'Conversational content with clear talking points and natural narration',
+    science_documentary: 'Accurate, fascinating content that balances scientific accuracy with storytelling'
+  };
+  return descriptions[type];
 } 

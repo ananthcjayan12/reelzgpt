@@ -162,6 +162,128 @@ export async function generateScenesAndDetails(transcription: string): Promise<{
   }
 }
 
+/**
+ * Generates scenes and details from a topic
+ */
+export async function generateScenesFromTopic(topic: string): Promise<{
+  scenes: Scene[];
+  youtubeDetails: YouTubeDetails;
+}> {
+  try {
+    const openai = getOpenAIClient();
+    const { selectedModel } = useSettingsStore.getState();
+    const { 
+      videoType,
+      videoTypeTemplates,
+      topicGenerationSystemPrompt,
+      topicGenerationUserPrompt,
+      narrationDescription,
+      imagePromptDescription
+    } = usePromptStore.getState();
+
+    // Get the appropriate prompts based on the selected video type
+    const template = videoTypeTemplates[videoType];
+    const systemPrompt = template.systemPrompt || topicGenerationSystemPrompt;
+    
+    // Replace placeholders in the user prompt
+    const userPrompt = template.userPromptTopic || topicGenerationUserPrompt;
+    const formattedUserPrompt = userPrompt.replace('{topic}', topic);
+
+    const completion = await openai.chat.completions.create({
+      model: selectedModel,
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        {
+          role: "user",
+          content: formattedUserPrompt
+        }
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "generate_scenes",
+            description: "Generates scenes with narration and image prompts",
+            parameters: {
+              type: "object",
+              properties: {
+                scenes: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      narration: {
+                        type: "string",
+                        description: narrationDescription
+                      },
+                      imagePrompt: {
+                        type: "string",
+                        description: imagePromptDescription
+                      },
+                      mood: {
+                        type: "string",
+                        enum: ["adventure", "dramatic", "happy", "romantic", "suspense"]
+                      }
+                    },
+                    required: ["narration", "imagePrompt", "mood"]
+                  }
+                },
+                youtubeDetails: {
+                  type: "object",
+                  properties: {
+                    title: {
+                      type: "string",
+                      description: "Engaging YouTube video title"
+                    },
+                    description: {
+                      type: "string",
+                      description: "SEO-friendly video description"
+                    },
+                    thumbnailTitle: {
+                      type: "string",
+                      description: "Short, catchy title for thumbnail"
+                    },
+                    thumbnailPrompt: {
+                      type: "string",
+                      description: "Image generation prompt for thumbnail"
+                    }
+                  },
+                  required: ["title", "description", "thumbnailTitle", "thumbnailPrompt"]
+                }
+              },
+              required: ["scenes", "youtubeDetails"]
+            }
+          }
+        }
+      ]
+    });
+
+    const result = completion.choices[0].message.tool_calls?.[0];
+    if (!result || result.function.name !== 'generate_scenes') {
+      throw new Error('Invalid response from OpenAI');
+    }
+
+    const { scenes, youtubeDetails } = JSON.parse(result.function.arguments);
+
+    // Add IDs and order to scenes
+    const processedScenes = scenes.map((scene: Omit<Scene, 'id' | 'order'>, index: number) => ({
+      ...scene,
+      id: `scene-${index + 1}`,
+      order: index + 1
+    }));
+
+    return {
+      scenes: processedScenes,
+      youtubeDetails
+    };
+  } catch (error: any) {
+    throw handleError(error, 'scene-generation');
+  }
+}
+
 export async function generateAudio(text: string): Promise<Blob> {
   try {
     console.log('[OpenAI] Starting audio generation with text:', text);

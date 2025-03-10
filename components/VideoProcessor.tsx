@@ -29,8 +29,10 @@ import {
   RefreshCw,
   Youtube,
   Loader2,
-  FileVideo
+  FileVideo,
+  MessageSquare
 } from 'lucide-react';
+import { usePromptStore } from '@/lib/store/prompts';
 
 interface VideoPlayerWithSubtitlesProps {
   videoUrl: string;
@@ -45,11 +47,14 @@ interface ScenePreviewProps {
 
 export function VideoProcessor() {
   const [url, setUrl] = useState('');
+  const [topic, setTopic] = useState('');
   const [videoFormat, setVideoFormat] = useState<'landscape' | 'reel'>('reel');
+  const [activeTab, setActiveTab] = useState<'youtube' | 'topic'>('youtube');
   const { isProcessing, progress } = useProcessingState();
   const scenes = useScenes();
   const currentProject = useCurrentProject();
   const { createProject, setError, setScenes, updateScene } = useProjectActions();
+  const { scriptSource, setScriptSource } = usePromptStore();
   const projectService = new ProjectService();
   const [isGeneratingAllAudio, setIsGeneratingAllAudio] = useState(false);
   const [isGeneratingAllImages, setIsGeneratingAllImages] = useState(false);
@@ -157,33 +162,57 @@ export function VideoProcessor() {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!url) return;
-
+    
     try {
       // Initialize file system with user interaction
       await fileSystemRef.current?.initialize(true);
 
-      // Create new project with selected video format
-      const project = await projectService.createProject(url, videoFormat);
-
-      // Get YouTube transcription
-      const transcription = await getOrCreateTranscription(url);
-      console.log('Transcription:', transcription);
-
-      // Generate scenes (only narration and prompts)
-      const result = await projectService.generateScenes(transcription);
+      // Set the script source in the prompt store
+      setScriptSource(activeTab);
       
-      // Initialize scenes with status
-      const scenesWithStatus = result.scenes.map((scene: Omit<Scene, 'status'>) => ({
-        ...scene,
-        status: {
-          audioGenerated: false,
-          imageGenerated: false
-        }
-      }));
-      
-      setScenes(scenesWithStatus);
+      if (activeTab === 'youtube') {
+        if (!url) return;
+        
+        // Create new project with selected video format
+        const project = await projectService.createProject(url, videoFormat);
 
+        // Get YouTube transcription
+        const transcription = await getOrCreateTranscription(url);
+        console.log('Transcription:', transcription);
+
+        // Generate scenes (only narration and prompts)
+        const result = await projectService.generateScenes(transcription);
+        
+        // Initialize scenes with status
+        const scenesWithStatus = result.scenes.map((scene: Omit<Scene, 'status'>) => ({
+          ...scene,
+          status: {
+            audioGenerated: false,
+            imageGenerated: false
+          }
+        }));
+        
+        setScenes(scenesWithStatus);
+      } else {
+        if (!topic) return;
+        
+        // Create new project with selected video format
+        const project = await projectService.createProject(`Topic: ${topic}`, videoFormat);
+
+        // Generate scenes from topic
+        const result = await projectService.generateScenesFromTopic(topic);
+        
+        // Initialize scenes with status
+        const scenesWithStatus = result.scenes.map((scene: Omit<Scene, 'status'>) => ({
+          ...scene,
+          status: {
+            audioGenerated: false,
+            imageGenerated: false
+          }
+        }));
+        
+        setScenes(scenesWithStatus);
+      }
     } catch (error: any) {
       setError({
         stage: 'video-processing',
@@ -655,57 +684,98 @@ export function VideoProcessor() {
       <Card>
         <CardHeader>
           <CardTitle>Create New Video</CardTitle>
-          <CardDescription>Enter a YouTube URL to get started</CardDescription>
+          <CardDescription>Generate a video from YouTube or a custom topic</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="max-w-3xl mx-auto space-y-6">
-            {/* Search Input */}
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <Youtube className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <Input
-                type="text"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="Paste YouTube URL here"
-                className="w-full pl-12 pr-4 h-14 text-lg"
-                disabled={isProcessing}
-              />
-            </div>
+          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'youtube' | 'topic')} className="w-full mb-6">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="youtube" className="flex items-center space-x-2">
+                <Youtube className="h-4 w-4" />
+                <span>YouTube</span>
+              </TabsTrigger>
+              <TabsTrigger value="topic" className="flex items-center space-x-2">
+                <MessageSquare className="h-4 w-4" />
+                <span>Custom Topic</span>
+              </TabsTrigger>
+            </TabsList>
+            
+            <form onSubmit={handleSubmit} className="max-w-3xl mx-auto space-y-6 mt-6">
+              <TabsContent value="youtube">
+                {/* YouTube URL Input */}
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <Youtube className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <Input
+                    type="text"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="Paste YouTube URL here"
+                    className="w-full pl-12 pr-4 h-14 text-lg"
+                    disabled={isProcessing}
+                  />
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="topic">
+                {/* Topic Input */}
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <Input
+                    type="text"
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    placeholder="Enter your topic here (e.g., 'The history of space exploration')"
+                    className="w-full pl-12 pr-4 h-14 text-lg"
+                    disabled={isProcessing}
+                  />
+                </div>
+              </TabsContent>
 
-            {/* Format Selection and Submit */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden sm:col-span-2">
-                <Button
-                  type="button"
-                  variant={videoFormat === 'landscape' ? 'default' : 'outline'}
-                  onClick={() => setVideoFormat('landscape')}
-                  disabled={isProcessing}
-                  className="rounded-none border-r-0 h-12 text-base"
+              {/* Format Selection and Submit */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden sm:col-span-2">
+                  <Button
+                    type="button"
+                    variant={videoFormat === 'landscape' ? 'default' : 'outline'}
+                    onClick={() => setVideoFormat('landscape')}
+                    disabled={isProcessing}
+                    className="rounded-none border-r-0 h-12 text-base"
+                  >
+                    Landscape
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={videoFormat === 'reel' ? 'default' : 'outline'}
+                    onClick={() => setVideoFormat('reel')}
+                    disabled={isProcessing}
+                    className="rounded-none h-12 text-base"
+                  >
+                    Reel
+                  </Button>
+                </div>
+                <Button 
+                  type="submit" 
+                  disabled={isProcessing || (activeTab === 'youtube' ? !url : !topic)}
+                  className="h-12 text-base w-full"
                 >
-                  Landscape
-                </Button>
-                <Button
-                  type="button"
-                  variant={videoFormat === 'reel' ? 'default' : 'outline'}
-                  onClick={() => setVideoFormat('reel')}
-                  disabled={isProcessing}
-                  className="rounded-none h-12 text-base"
-                >
-                  Reel
+                  {activeTab === 'youtube' ? (
+                    <>
+                      <Youtube className="mr-2 h-5 w-5" />
+                      Process
+                    </>
+                  ) : (
+                    <>
+                      <MessageSquare className="mr-2 h-5 w-5" />
+                      Generate
+                    </>
+                  )}
                 </Button>
               </div>
-              <Button 
-                type="submit" 
-                disabled={isProcessing || !url}
-                className="h-12 text-base w-full"
-              >
-                <Youtube className="mr-2 h-5 w-5" />
-                Process
-              </Button>
-            </div>
-          </form>
+            </form>
+          </Tabs>
         </CardContent>
       </Card>
 

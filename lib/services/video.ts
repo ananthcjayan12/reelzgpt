@@ -98,7 +98,7 @@ export class VideoProcessor {
         '-i', 'audio.mp3',
         // Video settings
         '-c:v', 'libx264',
-        '-preset', 'medium',  // Better quality preset (balance between speed and quality)
+        '-preset', 'slow',  // Better quality preset (balance between speed and quality)
         '-tune', 'stillimage',
         '-c:a', 'aac',
         '-b:a', '320k',  // Higher audio bitrate for better quality

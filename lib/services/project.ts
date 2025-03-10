@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Project, Scene, YouTubeDetails, ProgressStatus, ProcessingError as ProcessingErrorClass } from '@/types';
-import { generateScenesAndDetails, generateAudio } from './openai';
+import { generateScenesAndDetails, generateScenesFromTopic, generateAudio } from './openai';
 import { generateImage, generateThumbnail, downloadImage } from './replicate';
 import { VideoProcessor } from './video';
 import { useProjectStore } from '@/lib/store';
@@ -107,6 +107,45 @@ export class ProjectService {
       });
 
       const { scenes, youtubeDetails } = await generateScenesAndDetails(transcription);
+      
+      setScenes(scenes);
+      setYouTubeDetails(youtubeDetails);
+      
+      setProgress({
+        stage: 'scene-generation',
+        progress: 1,
+        message: 'Scene generation complete'
+      });
+
+      return { scenes, youtubeDetails };
+    } catch (error: any) {
+      setError({
+        stage: 'scene-generation',
+        message: error.message,
+        details: error,
+        timestamp: new Date(),
+      });
+      throw error;
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  /**
+   * Generates scenes and details from a topic
+   */
+  async generateScenesFromTopic(topic: string): Promise<{ scenes: Scene[]; youtubeDetails: YouTubeDetails }> {
+    const { setScenes, setYouTubeDetails, setProcessing, setProgress, setError } = useProjectStore.getState();
+    
+    try {
+      setProcessing(true);
+      setProgress({
+        stage: 'scene-generation',
+        progress: 0,
+        message: 'Generating scenes from topic...'
+      });
+
+      const { scenes, youtubeDetails } = await generateScenesFromTopic(topic);
       
       setScenes(scenes);
       setYouTubeDetails(youtubeDetails);
